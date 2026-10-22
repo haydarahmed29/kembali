@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/AuthProvider";
 import { createGroup, joinGroupByCode } from "@/lib/group";
 
 export default function ModePage() {
   const router = useRouter();
-  const { user, profile } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const [mode, setMode] = useState<"solo" | "group">("solo");
   const [joinCode, setJoinCode] = useState("");
   const [groupName, setGroupName] = useState("Trip Bali");
@@ -15,12 +15,16 @@ export default function ModePage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    if (!authLoading && !user) router.replace("/");
+  }, [authLoading, user, router]);
+
   async function handleJoin() {
     if (!user || !joinCode.trim()) return;
     setError(null);
     setLoading(true);
     try {
-      await joinGroupByCode(user.uid, joinCode);
+      await joinGroupByCode(user.uid, profile?.displayName ?? "Seseorang", joinCode);
       router.push("/home");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal join group.");
@@ -45,6 +49,18 @@ export default function ModePage() {
 
   function handleContinueSolo() {
     router.push("/home");
+  }
+
+  if (profile?.groupId && !createdCode) {
+    return (
+      <div className="min-h-dvh flex flex-col p-5 gap-4 justify-center">
+        <h1 className="m-0 text-[24px] font-extrabold tracking-tight">Kamu udah di group trip.</h1>
+        <p className="m-0 text-sm text-kb-muted">Kalau mau pindah group, keluar dulu dari group sekarang lewat halaman Profil.</p>
+        <button type="button" onClick={() => router.push("/home")} className="h-[54px] rounded-full bg-kb-lime text-kb-ink font-bold text-base">
+          Ke Home
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -102,12 +118,17 @@ export default function ModePage() {
       {mode === "group" && (
         <div className="bg-kb-green rounded-3xl p-4.5 flex flex-col gap-4 text-white -mt-2">
           <div className="flex flex-col gap-2">
-            <label className="text-[13px] font-semibold text-kb-lime">Punya kode group?</label>
+            <label htmlFor="join-code" className="text-[13px] font-semibold text-kb-lime">
+              Punya kode group?
+            </label>
             <div className="flex gap-2">
               <input
+                id="join-code"
                 value={joinCode}
                 onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
                 placeholder="KB-7X2Q"
+                autoCapitalize="characters"
+                autoCorrect="off"
                 className="flex-1 min-w-0 h-[50px] rounded-2xl px-4 text-base font-bold tracking-widest bg-kb-green-light text-white placeholder:text-[#9FB49A]"
               />
               <button
@@ -116,7 +137,7 @@ export default function ModePage() {
                 disabled={loading || !joinCode.trim()}
                 className="h-[50px] px-5 rounded-2xl bg-kb-lime text-kb-ink font-bold text-sm disabled:opacity-60"
               >
-                Gabung
+                {loading ? "..." : "Gabung"}
               </button>
             </div>
           </div>
@@ -147,9 +168,16 @@ export default function ModePage() {
               </>
             ) : (
               <>
-                <div className="text-[13px] text-[#C9D6C4]">Group dibuat! Kodenya:</div>
-                <div className="flex items-center justify-between">
-                  <div className="text-2xl font-extrabold tracking-[4px] text-kb-lime">{createdCode}</div>
+                <div className="text-[13px] text-[#C9D6C4]">Group dibuat! Bagikan kode ini ke temen-temen:</div>
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(createdCode).catch(() => {})}
+                    className="text-2xl font-extrabold tracking-[4px] text-kb-lime"
+                    aria-label="Salin kode"
+                  >
+                    {createdCode}
+                  </button>
                   <button
                     type="button"
                     onClick={() => router.push("/home")}
@@ -158,6 +186,7 @@ export default function ModePage() {
                     Lanjut
                   </button>
                 </div>
+                <div className="text-[11px] text-[#C9D6C4]">Ketuk kodenya buat salin.</div>
               </>
             )}
           </div>

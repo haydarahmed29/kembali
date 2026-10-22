@@ -8,7 +8,7 @@ import { signOut } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
-import { leaveGroup } from "@/lib/group";
+import { isOwner, leaveGroup } from "@/lib/group";
 import { enablePushNotifications } from "@/lib/push";
 
 export default function ProfilePage() {
@@ -23,29 +23,32 @@ export default function ProfilePage() {
     const result = await enablePushNotifications(user.uid);
     setPushStatus(
       result === "granted"
-        ? "Notifikasi diaktifkan."
+        ? "✓ Notifikasi aktif di HP ini."
         : result === "unsupported"
-          ? "HP/browser ini belum support, atau PWA-nya belum di-Add to Home Screen."
-          : "Izin notifikasi ditolak."
+          ? "Belum bisa: di iPhone, install dulu lewat Share → Add to Home Screen, lalu buka dari ikon Kem.Bali."
+          : result === "denied"
+            ? "Izin notifikasi ditolak — aktifkan lagi di pengaturan HP."
+            : "Gagal aktifin notifikasi, coba lagi nanti."
     );
   }
 
   async function handleLeave() {
     if (!user || !group) return;
-    if (!window.confirm(`Keluar dari ${group.name}? Data pribadi kamu tetap tersimpan.`)) return;
+    const ownerNote = isOwner(group, user.uid) && group.memberUids.length > 1 ? " Status owner bakal pindah ke anggota lain." : "";
+    if (!window.confirm(`Keluar dari ${group.name}? Data pribadi kamu tetap tersimpan.${ownerNote}`)) return;
     setLeaving(true);
     try {
-      await leaveGroup(user.uid, group.id);
+      await leaveGroup(user.uid, profile?.displayName ?? "Seseorang", group);
+    } catch {
+      window.alert("Gagal keluar dari group, coba lagi.");
     } finally {
       setLeaving(false);
     }
   }
 
-  async function changeDepartureDate() {
+  async function changeDepartureDate(value: string) {
     if (!user) return;
-    const next = window.prompt("Tanggal berangkat (YYYY-MM-DD):", profile?.departureDate ?? "");
-    if (!next) return;
-    await updateDoc(doc(db, "users", user.uid), { departureDate: next });
+    await updateDoc(doc(db, "users", user.uid), { departureDate: value || null });
   }
 
   async function handleSignOut() {
@@ -66,7 +69,7 @@ export default function ProfilePage() {
           <div className="text-xs text-[#C9D6C4]">@{profile?.username}</div>
           {group && (
             <div className="text-xs text-kb-lime font-semibold mt-0.5">
-              Di group {group.name} · {profile?.role === "owner" ? "Owner" : "Member"}
+              Di group {group.name} · {isOwner(group, user?.uid) ? "Owner" : "Member"}
             </div>
           )}
         </div>
@@ -85,13 +88,25 @@ export default function ProfilePage() {
         <ProfileLink href="/itinerary" title="Itinerary" />
       </div>
 
-      <button type="button" onClick={changeDepartureDate} className="bg-white rounded-2xl px-3.5 py-3 flex items-center gap-3 text-left">
+      <label className="bg-white rounded-2xl px-3.5 py-3 flex items-center gap-3 text-left">
         <div className="flex-1">
           <div className="text-sm font-bold">Tanggal berangkat</div>
-          <div className="text-xs text-kb-muted">{profile?.departureDate ?? "Belum diatur"}</div>
+          <div className="text-xs text-kb-muted">Punya kamu sendiri — tiap orang bisa beda</div>
         </div>
-        <span className="text-xs font-bold text-kb-green">Ubah</span>
-      </button>
+        <input
+          type="date"
+          value={profile?.departureDate ?? ""}
+          onChange={(e) => changeDepartureDate(e.target.value)}
+          className="h-10 rounded-xl border border-kb-border px-2.5 text-sm bg-kb-card"
+        />
+      </label>
+
+      {group && isOwner(group, user?.uid) && (
+        <Link href="/admin" className="bg-kb-green text-kb-lime rounded-2xl px-3.5 py-3 flex items-center gap-3">
+          <div className="flex-1 text-sm font-bold">Dashboard admin</div>
+          <span className="text-xs font-bold">Buka →</span>
+        </Link>
+      )}
 
       <button type="button" onClick={handleEnablePush} className="bg-white rounded-2xl px-3.5 py-3 flex items-center gap-3 text-left">
         <div className="flex-1">

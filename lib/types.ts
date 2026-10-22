@@ -14,7 +14,9 @@ export interface UserProfile {
   role: "owner" | "member" | null;
   departureDate: string | null; // ISO date, personal — used when groupId is null
   shareLocation: boolean;
+  lastLocation?: { lat: number; lng: number; accuracy: number; updatedAt: Timestamp } | null; // only while shareLocation is on
   fcmTokens: string[]; // for push notifications
+  seeded?: { bags?: boolean; outfit?: boolean; supplies?: boolean }; // default packing templates already created
   createdAt: Timestamp;
 }
 
@@ -37,6 +39,7 @@ export interface Document {
   category: "tiket" | "penginapan" | "transport" | "lainnya";
   sourceType: "upload" | "drive_link";
   url: string; // storage download URL, or the pasted Drive link
+  storagePath?: string | null; // Storage object path for uploads, so deleting the doc can delete the file
   createdAt: Timestamp;
 }
 
@@ -99,9 +102,10 @@ export interface AccommodationOption {
   title: string;
   priceText: string; // "Rp 3,2 jt / 4 malam"
   link: string; // Agoda / Traveloka / Maps link
-  source: "agoda" | "traveloka" | "maps" | "other";
+  source: "agoda" | "traveloka" | "airbnb" | "maps" | "other";
   imageUrl: string | null; // fetched by the link-unfurl Cloud Function
-  votes: string[]; // uids
+  votes: string[]; // uids — one vote per member across all options
+  chosen?: boolean; // set by the owner when the group settles on this one
   proposedBy: string;
   createdAt: Timestamp;
 }
@@ -136,6 +140,7 @@ export interface Spot {
   favoriteCount: number;
   imageUrl: string | null;
   mapsUrl: string | null;
+  createdBy: string;
 }
 
 export interface SpotSubmission {

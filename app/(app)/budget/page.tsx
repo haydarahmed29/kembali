@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { addDoc, collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, serverTimestamp, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { useGroupMembers, nameFor } from "@/lib/useGroupMembers";
 import { settleUp } from "@/lib/settleUp";
 import { logActivity } from "@/lib/activityLog";
+import { isOwner } from "@/lib/group";
+import { parseRupiah } from "@/lib/time";
 import type { Expense } from "@/lib/types";
 
 const CATEGORIES: Expense["category"][] = ["transport", "makan", "tiket", "penginapan", "belanja", "lainnya"];
@@ -16,7 +18,10 @@ export default function BudgetPage() {
   const { user, profile } = useAuth();
   const { group } = useGroup();
   const members = useGroupMembers(group?.memberUids);
-  const [tab, setTab] = useState<"personal" | "group">(group ? "group" : "personal");
+  // null = follow the default (group tab when in a group); the group loads after first render
+  const [tabChoice, setTabChoice] = useState<"personal" | "group" | null>(null);
+  const tab = tabChoice ?? (group ? "group" : "personal");
+  const setTab = setTabChoice;
   const [expenses, setExpenses] = useState<Expense[]>([]);
 
   useEffect(() => {
@@ -25,29 +30,40 @@ export default function BudgetPage() {
       tab === "personal"
         ? query(collection(db, "expenses"), where("paidBy", "==", user.uid), where("groupId", "==", null), orderBy("createdAt", "desc"))
         : query(collection(db, "expenses"), where("groupId", "==", group?.id ?? "__none__"), orderBy("createdAt", "desc"));
-    const unsub = onSnapshot(q, (snap) => setExpenses(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Expense)));
-    return () => unsub();
+    return onSnapshot(
+      q,
+      (snap) => setExpenses(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Expense)),
+      () => setExpenses([])
+    );
   }, [user, group?.id, tab]);
 
   async function addExpense() {
     if (!user) return;
     const title = window.prompt("Untuk apa?");
-    if (!title) return;
-    const amount = Number(window.prompt("Berapa rupiah?", "0") ?? "0");
-    if (!amount) return;
-    const day = Number(window.prompt("Hari ke-?", "1") ?? "1") || 1;
-    const category = (window.prompt(`Kategori (${CATEGORIES.join("/")}):`, "lainnya") as Expense["category"]) || "lainnya";
+    if (!title?.trim()) return;
+    const amountRaw = window.prompt("Berapa rupiah? (boleh pakai titik, misal 150.000)", "");
+    if (amountRaw === null) return;
+    const amount = parseRupiah(amountRaw);
+    if (!amount) {
+      window.alert("Nominalnya belum keisi.");
+      return;
+    }
+    const dayRaw = window.prompt("Hari ke-?", "1");
+    if (dayRaw === null) return;
+    const day = Math.max(1, Math.round(Number(dayRaw)) || 1);
+    const categoryRaw = (window.prompt(`Kategori (${CATEGORIES.join(" / ")}):`, "lainnya") ?? "lainnya").trim().toLowerCase();
+    const category = (CATEGORIES as string[]).includes(categoryRaw) ? (categoryRaw as Expense["category"]) : "lainnya";
 
     const splitAmong = tab === "group" && group ? group.memberUids : [user.uid];
     await addDoc(collection(db, "expenses"), {
       groupId: tab === "group" ? group?.id ?? null : null,
       day,
-      title,
-      category: CATEGORIES.includes(category) ? category : "lainnya",
+      title: title.trim(),
+      category,
       amount,
       paidBy: user.uid,
       splitAmong,
-      createdAt: new Date(),
+      createdAt: serverTimestamp(),
     });
 
     if (tab === "group" && group) {
@@ -56,7 +72,21 @@ export default function BudgetPage() {
         actorUid: user.uid,
         actorName: profile?.displayName ?? "Seseorang",
         action: "expense_added",
-        message: `menambahkan pengeluaran "${title}" Rp ${amount.toLocaleString("id-ID")}`,
+        message: `menambahkan pengeluaran "${title.trim()}" Rp ${amount.toLocaleString("id-ID")}`,
+      });
+    }
+  }
+
+  async function removeExpense(exp: Expense) {
+    if (!window.confirm(`Hapus "${exp.title}" (Rp ${exp.amount.toLocaleString("id-ID")})?`)) return;
+    await deleteDoc(doc(db, "expenses", exp.id));
+    if (exp.groupId && group && user) {
+      await logActivity({
+        groupId: group.id,
+        actorUid: user.uid,
+        actorName: profile?.displayName ?? "Seseorang",
+        action: "expense_added",
+        message: `menghapus pengeluaran "${exp.title}" Rp ${exp.amount.toLocaleString("id-ID")}`,
       });
     }
   }
@@ -104,6 +134,11 @@ export default function BudgetPage() {
               </div>
             </div>
             <div className="text-sm font-bold">{exp.amount.toLocaleString("id-ID")}</div>
+            {(exp.paidBy === user?.uid || isOwner(group, user?.uid)) && (
+              <button type="button" onClick={() => removeExpense(exp)} aria-label={`Hapus ${exp.title}`} className="text-kb-muted text-sm pl-1">
+                ✕
+              </button>
+            )}
           </div>
         ))}
       </div>

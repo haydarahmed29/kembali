@@ -1,30 +1,43 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "./firebase";
 import type { UserProfile } from "./types";
 
+/** Live profiles of every group member (live so shared locations and names stay current). */
 export function useGroupMembers(memberUids: string[] | undefined) {
-  const [members, setMembers] = useState<UserProfile[]>([]);
+  const [byUid, setByUid] = useState<Record<string, UserProfile>>({});
+  const key = memberUids?.join(",") ?? "";
 
   useEffect(() => {
-    if (!memberUids || memberUids.length === 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting local state when the dependency goes away, not reacting to an external system
-      setMembers([]);
-      return;
-    }
-    let cancelled = false;
-    Promise.all(memberUids.map((uid) => getDoc(doc(db, "users", uid)))).then((snaps) => {
-      if (cancelled) return;
-      setMembers(snaps.filter((s) => s.exists()).map((s) => s.data() as UserProfile));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [memberUids?.join(",")]);
+    const uids = key ? key.split(",") : [];
+    const unsubs = uids.map((uid) =>
+      onSnapshot(
+        doc(db, "users", uid),
+        (snap) => {
+          setByUid((prev) => {
+            const next = { ...prev };
+            if (snap.exists()) next[uid] = snap.data() as UserProfile;
+            else delete next[uid];
+            return next;
+          });
+        },
+        () => {
+          // no permission (e.g. they just left the group) — just drop them from the list
+          setByUid((prev) => {
+            const next = { ...prev };
+            delete next[uid];
+            return next;
+          });
+        }
+      )
+    );
+    return () => unsubs.forEach((u) => u());
+  }, [key]);
 
-  return members;
+  const uids = key ? key.split(",") : [];
+  return uids.map((uid) => byUid[uid]).filter((m): m is UserProfile => !!m);
 }
 
 export function nameFor(members: UserProfile[], uid: string): string {

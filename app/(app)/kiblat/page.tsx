@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { qiblaBearing } from "@/lib/qibla";
 
@@ -20,53 +20,106 @@ const PRAYER_LABELS: [keyof PrayerTimes, string][] = [
   ["Isha", "Isya"],
 ];
 
+// Fallback when location is denied/unavailable — the group is in Bali anyway.
+const DENPASAR = { lat: -8.6705, lng: 115.2126 };
+
+type OrientationEvt = DeviceOrientationEvent & { webkitCompassHeading?: number };
+
 export default function KiblatPage() {
-  const [bearing, setBearing] = useState<number | null>(null);
+  const [coords, setCoords] = useState<{ lat: number; lng: number; approx: boolean } | null>(null);
   const [heading, setHeading] = useState<number | null>(null);
+  const [compassMsg, setCompassMsg] = useState<string | null>(null);
   const [locError, setLocError] = useState<string | null>(null);
   const [prayerTimes, setPrayerTimes] = useState<PrayerTimes | null>(null);
+  const [prayerError, setPrayerError] = useState(false);
+  const cleanupRef = useRef<(() => void) | null>(null);
+  const gotReading = useRef(false);
 
+  // 1) Location (falls back to Denpasar)
   useEffect(() => {
+    const applyFallback = (msg: string) => {
+      setLocError(msg);
+      setCoords({ ...DENPASAR, approx: true });
+    };
     if (!("geolocation" in navigator)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- synchronous environment check, no external subscription involved
-      setLocError("HP kamu nggak support lokasi.");
+      applyFallback("HP kamu nggak support lokasi — arah kiblat & jadwal sholat pakai Denpasar.");
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const { latitude, longitude } = pos.coords;
-        setBearing(qiblaBearing(latitude, longitude));
-        try {
-          const res = await fetch(
-            `https://api.aladhan.com/v1/timings?latitude=${latitude}&longitude=${longitude}&method=20`
-          );
-          const json = await res.json();
-          setPrayerTimes(json?.data?.timings ?? null);
-        } catch {
-          // offline or API unreachable — the Denpasar fallback below still shows
-        }
-      },
-      () => setLocError("Izin lokasi ditolak — arah kiblat pakai estimasi Denpasar."),
-      { enableHighAccuracy: true, timeout: 8000 }
+      (pos) => setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude, approx: false }),
+      () => applyFallback("Izin lokasi ditolak — arah kiblat & jadwal sholat pakai Denpasar."),
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 5 * 60_000 }
     );
   }, []);
 
+  // 2) Prayer times for wherever we ended up (Aladhan, method 20 = Kemenag RI)
+  useEffect(() => {
+    if (!coords) return;
+    const controller = new AbortController();
+    fetch(`https://api.aladhan.com/v1/timings?latitude=${coords.lat}&longitude=${coords.lng}&method=20`, { signal: controller.signal })
+      .then((res) => res.json())
+      .then((json) => {
+        const t = json?.data?.timings;
+        if (t) setPrayerTimes(t);
+        else setPrayerError(true);
+      })
+      .catch((err) => {
+        if (err?.name !== "AbortError") setPrayerError(true);
+      });
+    return () => controller.abort();
+  }, [coords]);
+
+  // stop listening to the compass when leaving the page
+  useEffect(() => () => cleanupRef.current?.(), []);
+
   async function enableCompass() {
-    const DOE = window.DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> };
-    if (typeof DOE?.requestPermission === "function") {
-      const result = await DOE.requestPermission();
-      if (result !== "granted") return;
+    setCompassMsg(null);
+    const DOE = window.DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> } | undefined;
+    if (!DOE) {
+      setCompassMsg("HP ini nggak punya sensor kompas — pakai angka derajat di atas ya.");
+      return;
     }
-    window.addEventListener("deviceorientationabsolute", onOrientation as EventListener, true);
-    window.addEventListener("deviceorientation", onOrientation as EventListener, true);
+    if (typeof DOE.requestPermission === "function") {
+      // iOS: must be asked from a tap
+      try {
+        const result = await DOE.requestPermission();
+        if (result !== "granted") {
+          setCompassMsg("Izin sensor ditolak. Buka ulang halaman ini buat coba lagi.");
+          return;
+        }
+      } catch {
+        setCompassMsg("Nggak bisa akses sensor kompas.");
+        return;
+      }
+    }
+
+    // iOS gives a true compass heading via webkitCompassHeading on `deviceorientation`.
+    // Android only gives a north-referenced alpha on `deviceorientationabsolute`; plain
+    // `deviceorientation` alpha there is relative to how the phone started, which points wrong.
+    const useAbsolute = "ondeviceorientationabsolute" in window;
+    const eventName = useAbsolute ? "deviceorientationabsolute" : "deviceorientation";
+    const handler = (e: Event) => {
+      const evt = e as OrientationEvt;
+      let h: number | null = null;
+      if (typeof evt.webkitCompassHeading === "number") h = evt.webkitCompassHeading;
+      else if (evt.alpha != null && (useAbsolute || evt.absolute)) h = (360 - evt.alpha) % 360;
+      if (h != null) {
+        gotReading.current = true;
+        setHeading(h);
+      }
+    };
+    window.addEventListener(eventName, handler, true);
+    cleanupRef.current?.();
+    cleanupRef.current = () => window.removeEventListener(eventName, handler, true);
+    setTimeout(() => {
+      if (!gotReading.current) setCompassMsg("Sensor kompas nggak kebaca di HP ini — pakai angka derajat dari utara aja.");
+    }, 2500);
   }
 
-  function onOrientation(e: DeviceOrientationEvent & { webkitCompassHeading?: number }) {
-    const h = e.webkitCompassHeading ?? (e.alpha != null ? 360 - e.alpha : null);
-    if (h != null) setHeading(h);
-  }
-
-  const needleRotation = bearing != null ? bearing - (heading ?? 0) : 295;
+  const bearing = coords ? qiblaBearing(coords.lat, coords.lng) : null;
+  // with a live heading the needle points at the Kaaba relative to the phone; without one it shows bearing from north
+  const needleRotation = bearing != null ? bearing - (heading ?? 0) : 0;
+  const aligned = heading != null && bearing != null && Math.abs(((needleRotation % 360) + 540) % 360 - 180) < 5;
 
   return (
     <div className="p-4 flex flex-col gap-3.5">
@@ -79,28 +132,42 @@ export default function KiblatPage() {
 
       <div className="bg-kb-green text-white rounded-[28px] p-5.5 flex flex-col items-center gap-3">
         <div className="text-xs font-semibold text-kb-lime">Kompas Kiblat</div>
-        <div className="w-[220px] h-[220px] rounded-full bg-kb-green-light relative flex items-center justify-center">
+        <div className={`w-[220px] h-[220px] rounded-full relative flex items-center justify-center transition-colors ${aligned ? "bg-[#3C6250]" : "bg-kb-green-light"}`}>
           <div className="absolute inset-2.5 rounded-full border border-[#3C6250]" />
-          <span className="absolute top-3.5 text-xs font-extrabold text-[#C9D6C4]">U</span>
-          <span className="absolute bottom-3.5 text-xs font-extrabold text-[#C9D6C4]">S</span>
-          <span className="absolute left-3.5 text-xs font-extrabold text-[#C9D6C4]">B</span>
-          <span className="absolute right-3.5 text-xs font-extrabold text-[#C9D6C4]">T</span>
-          <div
-            className="absolute w-1.5 h-[90px] bg-kb-lime rounded-full origin-bottom"
-            style={{ transform: `rotate(${needleRotation}deg)`, bottom: "50%" }}
-          />
+          {heading == null && (
+            <>
+              <span className="absolute top-3.5 text-xs font-extrabold text-[#C9D6C4]">U</span>
+              <span className="absolute bottom-3.5 text-xs font-extrabold text-[#C9D6C4]">S</span>
+              <span className="absolute left-3.5 text-xs font-extrabold text-[#C9D6C4]">B</span>
+              <span className="absolute right-3.5 text-xs font-extrabold text-[#C9D6C4]">T</span>
+            </>
+          )}
+          {bearing != null && (
+            <div
+              className="absolute w-1.5 h-[90px] bg-kb-lime rounded-full origin-bottom transition-transform duration-200"
+              style={{ transform: `rotate(${needleRotation}deg)`, bottom: "50%" }}
+            />
+          )}
           <div className="w-[46px] h-[46px] rounded-full bg-kb-lime text-kb-green flex items-center justify-center text-lg z-10">🕋</div>
         </div>
         <div className="text-[22px] font-extrabold">{bearing != null ? `${Math.round(bearing)}°` : "..."} dari Utara</div>
+        <div className="text-[11px] text-[#C9D6C4] text-center">
+          {heading != null
+            ? aligned
+              ? "✓ Udah menghadap kiblat"
+              : "Putar badan sampai jarumnya lurus ke atas"
+            : "Tanpa kompas: jarum nunjukin arah dari utara (atas = utara)"}
+        </div>
         {heading == null && (
           <button type="button" onClick={enableCompass} className="h-10 px-4 rounded-full bg-kb-lime text-kb-ink font-bold text-xs">
             Aktifkan kompas HP
           </button>
         )}
+        {compassMsg && <p className="m-0 text-[11px] text-[#C9D6C4] text-center">{compassMsg}</p>}
         {locError && <p className="m-0 text-[11px] text-[#C9D6C4] text-center">{locError}</p>}
       </div>
 
-      <div className="text-[16px] font-bold">Jadwal Sholat</div>
+      <div className="text-[16px] font-bold">Jadwal Sholat {coords?.approx ? "(Denpasar)" : "hari ini"}</div>
       <div className="bg-white rounded-[22px] px-4">
         {prayerTimes ? (
           PRAYER_LABELS.map(([key, label]) => (
@@ -110,16 +177,36 @@ export default function KiblatPage() {
             </div>
           ))
         ) : (
-          <p className="text-sm text-kb-muted py-3">Aktifkan lokasi buat lihat jadwal sholat hari ini.</p>
+          <p className="text-sm text-kb-muted py-3">{prayerError ? "Jadwal sholat gagal dimuat — cek koneksi internet." : "Memuat jadwal sholat..."}</p>
         )}
       </div>
+
+      {coords && (
+        <a
+          href={`https://www.google.com/maps/search/masjid/@${coords.lat},${coords.lng},15z`}
+          target="_blank"
+          rel="noreferrer"
+          className="bg-white rounded-[22px] p-3.5 flex items-center gap-3"
+        >
+          <div className="w-11 h-11 rounded-2xl bg-kb-bg flex items-center justify-center shrink-0">🕌</div>
+          <div className="flex-1">
+            <div className="text-[15px] font-bold">Masjid & mushola terdekat</div>
+            <div className="text-xs text-kb-muted">Buka di Google Maps</div>
+          </div>
+          <span className="text-kb-green font-bold">↗</span>
+        </a>
+      )}
+
+      <Link href="/explore" className="text-xs font-bold text-kb-green px-1">
+        Cari tempat makan halal di Explore →
+      </Link>
 
       <p className="text-[11px] text-kb-muted px-1">
         Arah kiblat dihitung dari lokasi kamu ke Ka&apos;bah. Jadwal sholat dari{" "}
         <a href="https://aladhan.com/" target="_blank" rel="noreferrer" className="underline">
           Aladhan API
-        </a>
-        .
+        </a>{" "}
+        (metode Kemenag RI).
       </p>
     </div>
   );

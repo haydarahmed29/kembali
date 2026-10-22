@@ -61,8 +61,16 @@ export default function DaftarPage() {
 
       router.push("/mode");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Gagal daftar, coba lagi.";
-      setError(message.includes("email-already-in-use") ? "Username udah dipakai, coba yang lain." : message);
+      const code = (err as { code?: string })?.code ?? "";
+      setError(
+        code === "auth/email-already-in-use"
+          ? "Username udah dipakai, coba yang lain."
+          : code === "auth/network-request-failed"
+            ? "Koneksi internet bermasalah."
+            : code === "auth/weak-password"
+              ? "Password terlalu lemah, minimal 6 karakter."
+              : "Gagal daftar, coba lagi."
+      );
     } finally {
       setLoading(false);
     }
@@ -121,6 +129,8 @@ export default function DaftarPage() {
           </div>
           <p className="m-0 text-xs text-kb-muted">Dipakai buat nyiapin template outfit otomatis.</p>
         </fieldset>
+
+        <p className="m-0 text-xs text-kb-muted">Inget-inget password-nya ya — nggak ada reset lewat email, harus minta tolong admin trip.</p>
 
         {error && <p className="text-sm text-red-700">{error}</p>}
 

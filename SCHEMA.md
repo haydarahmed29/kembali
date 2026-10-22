@@ -9,6 +9,7 @@ the group's shared data.
 | `usernames/{username}`  | `uid`                                                                    | Lookup used at signup (availability check) and nowhere else. |
 | `users/{uid}`            | `username`, `displayName`, `gender`, `groupId`, `role`, `departureDate`, `shareLocation`, `fcmTokens[]` | `groupId: null` = solo. |
 | `groups/{groupId}`       | `code`, `name`, `ownerUid`, `memberUids[]`, `startDate`, `endDate`        | `code` is the shareable join code (`KB-XXXX`). |
+| `groupCodes/{code}`     | `groupId`, `ownerUid`                                                    | Join-code lookup. Non-members can `get` one code but can't list/read groups. |
 | `documents/{id}`         | `ownerUid`, `groupId`, `name`, `category`, `sourceType`, `url`           | `sourceType`: `upload` (Firebase Storage) or `drive_link`. |
 | `packingBags/{id}`       | `ownerUid`, `name`, `items[]`                                            | `items[]`: `{id, name, qty, in, out}`. Always personal. |
 | `outfitItems/{id}`       | `ownerUid`, `category`, `name`, `qty`, `bag`, `done`                     | Seeded per-gender on first visit (see `lib/defaults.ts`). |

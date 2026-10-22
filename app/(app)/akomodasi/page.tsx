@@ -2,64 +2,144 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { addDoc, collection, doc, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
+import {
+  addDoc,
+  arrayRemove,
+  arrayUnion,
+  collection,
+  deleteDoc,
+  doc,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+  writeBatch,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
+import { isOwner } from "@/lib/group";
 import { logActivity } from "@/lib/activityLog";
 import type { AccommodationOption } from "@/lib/types";
 
 function detectSource(url: string): AccommodationOption["source"] {
-  if (/agoda\.com/.test(url)) return "agoda";
-  if (/traveloka\.com/.test(url)) return "traveloka";
-  if (/maps\.(google|app\.goo)/.test(url) || /goo\.gl\/maps/.test(url)) return "maps";
+  if (/agoda\./i.test(url)) return "agoda";
+  if (/traveloka\./i.test(url)) return "traveloka";
+  if (/airbnb\./i.test(url)) return "airbnb";
+  if (/maps\.(google|app\.goo)/i.test(url) || /goo\.gl\/maps/i.test(url) || /google\.[a-z.]+\/maps/i.test(url)) return "maps";
   return "other";
 }
+
+const SOURCE_STYLE: Record<AccommodationOption["source"], string> = {
+  agoda: "bg-[#E8720C]",
+  traveloka: "bg-[#1BA0E2]",
+  airbnb: "bg-[#FF385C]",
+  maps: "bg-[#34A853]",
+  other: "bg-kb-green",
+};
 
 export default function AkomodasiPage() {
   const { user, profile } = useAuth();
   const { group } = useGroup();
   const [options, setOptions] = useState<AccommodationOption[]>([]);
   const [link, setLink] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const owner = isOwner(group, user?.uid);
 
   useEffect(() => {
     if (!group) return;
     const q = query(collection(db, "accommodationOptions"), where("groupId", "==", group.id), orderBy("createdAt", "desc"));
-    const unsub = onSnapshot(q, (snap) => setOptions(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AccommodationOption)));
-    return () => unsub();
+    return onSnapshot(
+      q,
+      (snap) => setOptions(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AccommodationOption)),
+      () => setOptions([])
+    );
   }, [group]);
 
   async function addOption() {
-    if (!user || !group || !link.trim()) return;
-    const title = window.prompt("Nama villa/penginapan:") ?? "Villa";
-    const priceText = window.prompt("Harga (misal: Rp 3,2 jt / 4 malam):") ?? "";
+    const url = link.trim();
+    if (!user || !group || !url) return;
+    setError(null);
+    if (!/^https?:\/\//i.test(url)) {
+      setError("Tempel link lengkap yang diawali https:// ya.");
+      return;
+    }
+    const title = window.prompt("Nama villa/penginapan:");
+    if (title === null) return; // cancelled
+    const priceText = window.prompt("Harga (misal: Rp 3,2 jt / 4 malam):", "") ?? "";
+    const name = title.trim() || "Villa";
     await addDoc(collection(db, "accommodationOptions"), {
       groupId: group.id,
-      title,
-      priceText,
-      link: link.trim(),
-      source: detectSource(link.trim()),
-      imageUrl: null, // filled in later by the linkUnfurl Cloud Function
-      votes: [],
+      title: name,
+      priceText: priceText.trim(),
+      link: url,
+      source: detectSource(url),
+      imageUrl: null, // filled in a few seconds later by the onAccommodationOptionCreate Cloud Function
+      votes: [user.uid], // the proposer votes for it by default
+      chosen: false,
       proposedBy: user.uid,
       createdAt: serverTimestamp(),
     });
+    // move the proposer's vote off any other option
+    await Promise.all(
+      options.filter((o) => o.votes.includes(user.uid)).map((o) => updateDoc(doc(db, "accommodationOptions", o.id), { votes: arrayRemove(user.uid) }))
+    );
     await logActivity({
       groupId: group.id,
       actorUid: user.uid,
       actorName: profile?.displayName ?? "Seseorang",
       action: "accommodation_update",
-      message: `menambahkan opsi akomodasi "${title}"`,
+      message: `menambahkan opsi akomodasi "${name}"`,
     });
     setLink("");
   }
 
+  /** One vote per person: voting here removes your vote from every other option (atomically). */
   async function vote(option: AccommodationOption) {
-    if (!user) return;
-    const votes = options.find((o) => o.id === option.id)?.votes ?? [];
-    const already = votes.includes(user.uid);
-    const next = already ? votes.filter((v) => v !== user.uid) : [...votes, user.uid];
-    await updateDoc(doc(db, "accommodationOptions", option.id), { votes: next });
+    if (!user || !group) return;
+    const already = option.votes.includes(user.uid);
+    const batch = writeBatch(db);
+    for (const o of options) {
+      if (o.id === option.id) {
+        batch.update(doc(db, "accommodationOptions", o.id), { votes: already ? arrayRemove(user.uid) : arrayUnion(user.uid) });
+      } else if (o.votes.includes(user.uid)) {
+        batch.update(doc(db, "accommodationOptions", o.id), { votes: arrayRemove(user.uid) });
+      }
+    }
+    await batch.commit();
+    if (!already) {
+      await logActivity({
+        groupId: group.id,
+        actorUid: user.uid,
+        actorName: profile?.displayName ?? "Seseorang",
+        action: "vote_cast",
+        message: `vote akomodasi "${option.title}"`,
+      });
+    }
+  }
+
+  async function choose(option: AccommodationOption) {
+    if (!user || !group || !owner) return;
+    if (!window.confirm(`Tutup voting & tetapkan "${option.title}" sebagai tempat tinggal?`)) return;
+    const batch = writeBatch(db);
+    for (const o of options) {
+      batch.update(doc(db, "accommodationOptions", o.id), { chosen: o.id === option.id });
+    }
+    await batch.commit();
+    await logActivity({
+      groupId: group.id,
+      actorUid: user.uid,
+      actorName: profile?.displayName ?? "Owner",
+      action: "accommodation_update",
+      message: `nutup voting akomodasi → "${option.title}"`,
+    });
+  }
+
+  async function remove(option: AccommodationOption) {
+    if (!window.confirm(`Hapus opsi "${option.title}"?`)) return;
+    await deleteDoc(doc(db, "accommodationOptions", option.id));
   }
 
   if (!group) {
@@ -71,6 +151,8 @@ export default function AkomodasiPage() {
   }
 
   const votedCount = new Set(options.flatMap((o) => o.votes)).size;
+  const chosen = options.find((o) => o.chosen);
+  const sorted = [...options].sort((a, b) => Number(!!b.chosen) - Number(!!a.chosen) || b.votes.length - a.votes.length);
 
   return (
     <div className="p-4 flex flex-col gap-3.5">
@@ -78,7 +160,7 @@ export default function AkomodasiPage() {
         <div className="flex-1 flex flex-col">
           <div className="font-bold text-[18px]">Mau Tinggal di Mana?</div>
           <div className="text-xs text-kb-muted">
-            {votedCount} dari {group.memberUids.length} udah vote
+            {chosen ? `Udah fix: ${chosen.title}` : `${votedCount} dari ${group.memberUids.length} udah vote`}
           </div>
         </div>
         <Link href="/history" aria-label="Riwayat" className="w-11 h-11 rounded-full bg-white flex items-center justify-center">
@@ -87,13 +169,14 @@ export default function AkomodasiPage() {
       </div>
 
       <div className="bg-kb-lime rounded-2xl px-3.5 py-2.5 text-xs text-[#2D3A1A] leading-relaxed">
-        Siapa aja boleh update pilihan villa di bawah, nanti yang lain tinggal vote. Kalau udah sepakat, Owner yang finalize.
+        Siapa aja boleh nambah pilihan villa, yang lain tinggal vote (1 orang 1 suara). Kalau udah sepakat, Owner yang tutup voting-nya.
       </div>
 
       <div className="bg-white rounded-[20px] px-3.5 py-2.5 flex items-center gap-2.5">
         <input
           value={link}
           onChange={(e) => setLink(e.target.value)}
+          inputMode="url"
           placeholder="Tempel link Agoda / Traveloka / Maps…"
           className="flex-1 min-w-0 h-11 border border-kb-border rounded-2xl px-3.5 text-[13px] bg-kb-card"
         />
@@ -101,20 +184,36 @@ export default function AkomodasiPage() {
           Tambah
         </button>
       </div>
-      <p className="m-0 -mt-2 text-[11px] text-kb-muted px-1">Foto &amp; harga ke-ambil otomatis dari link-nya</p>
+      {error ? (
+        <p className="m-0 -mt-2 text-xs text-red-700 px-1">{error}</p>
+      ) : (
+        <p className="m-0 -mt-2 text-[11px] text-kb-muted px-1">Foto ke-ambil otomatis dari link-nya (beberapa detik)</p>
+      )}
 
-      {options.map((opt) => {
+      {sorted.map((opt) => {
         const voted = user ? opt.votes.includes(user.uid) : false;
+        const canDelete = opt.proposedBy === user?.uid || owner;
         return (
-          <div key={opt.id} className={`bg-white rounded-[24px] p-3 flex flex-col gap-2.5 ${voted ? "border-2 border-kb-green" : ""}`}>
+          <div
+            key={opt.id}
+            className={`bg-white rounded-[24px] p-3 flex flex-col gap-2.5 ${opt.chosen ? "border-2 border-kb-lime" : voted ? "border-2 border-kb-green" : ""}`}
+          >
             <div className="flex gap-3">
               <div className="w-[84px] h-[84px] rounded-2xl bg-kb-bg shrink-0 relative overflow-hidden">
-                {opt.imageUrl && <img src={opt.imageUrl} alt="" className="w-full h-full object-cover" />}
-                <span className="absolute left-1 bottom-1 bg-kb-green text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-md capitalize">{opt.source}</span>
+                {opt.imageUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element -- remote OG images from arbitrary booking sites; next/image would need every domain whitelisted
+                  <img src={opt.imageUrl} alt="" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                )}
+                <span className={`absolute left-1 bottom-1 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-md capitalize ${SOURCE_STYLE[opt.source] ?? SOURCE_STYLE.other}`}>
+                  {opt.source === "other" ? "link" : opt.source}
+                </span>
               </div>
               <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                <div className="text-[15px] font-bold truncate">{opt.title}</div>
-                <div className="text-xs text-kb-muted">{opt.priceText}</div>
+                <div className="flex items-start gap-2">
+                  <div className="flex-1 text-[15px] font-bold truncate">{opt.title}</div>
+                  {opt.chosen && <span className="text-[10px] font-extrabold bg-kb-lime px-2 py-0.5 rounded-lg shrink-0">FIX</span>}
+                </div>
+                <div className="text-xs text-kb-muted">{opt.priceText || "Harga belum diisi"}</div>
                 <a href={opt.link} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-kb-green">
                   Lihat link ↗
                 </a>
@@ -122,29 +221,42 @@ export default function AkomodasiPage() {
             </div>
             <div className="flex items-center gap-2">
               <div className="flex-1 h-2 rounded bg-kb-bg overflow-hidden">
-                <div
-                  className="h-2 rounded bg-kb-green"
-                  style={{ width: `${(opt.votes.length / Math.max(1, group.memberUids.length)) * 100}%` }}
-                />
+                <div className="h-2 rounded bg-kb-green" style={{ width: `${(opt.votes.length / Math.max(1, group.memberUids.length)) * 100}%` }} />
               </div>
               <span className="text-xs font-bold">{opt.votes.length} suara</span>
             </div>
-            <button
-              type="button"
-              onClick={() => vote(opt)}
-              className={`h-11 rounded-2xl font-bold text-[13px] ${voted ? "bg-kb-green text-kb-lime" : "border border-kb-green text-kb-green"}`}
-            >
-              {voted ? "✓ Pilihanmu" : "Pilih ini"}
-            </button>
+            {!chosen && (
+              <button
+                type="button"
+                onClick={() => vote(opt)}
+                className={`h-11 rounded-2xl font-bold text-[13px] ${voted ? "bg-kb-green text-kb-lime" : "border border-kb-green text-kb-green"}`}
+              >
+                {voted ? "✓ Pilihanmu" : "Pilih ini"}
+              </button>
+            )}
+            <div className="flex items-center gap-4 px-1">
+              {owner && !opt.chosen && (
+                <button type="button" onClick={() => choose(opt)} className="text-[11px] font-bold text-kb-green underline">
+                  Tetapkan sebagai pilihan final
+                </button>
+              )}
+              {canDelete && (
+                <button type="button" onClick={() => remove(opt)} className="text-[11px] text-kb-muted ml-auto">
+                  Hapus
+                </button>
+              )}
+            </div>
           </div>
         );
       })}
 
       {options.length === 0 && <p className="text-sm text-kb-muted">Belum ada opsi villa. Tempel link di atas buat mulai.</p>}
 
-      <div className="text-[11px] text-kb-muted px-1">
-        Belum vote: {group.memberUids.filter((uid) => !options.some((o) => o.votes.includes(uid))).length} orang
-      </div>
+      {!chosen && options.length > 0 && (
+        <div className="text-[11px] text-kb-muted px-1">
+          Belum vote: {group.memberUids.filter((uid) => !options.some((o) => o.votes.includes(uid))).length} orang
+        </div>
+      )}
     </div>
   );
 }

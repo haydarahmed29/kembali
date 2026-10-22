@@ -16,16 +16,30 @@ service cloud.firestore {
     }
 
     function isGroupMember(groupId) {
-      return isSignedIn() && request.auth.uid in groupOf(groupId).memberUids;
+      return isSignedIn() && groupId != null && request.auth.uid in groupOf(groupId).memberUids;
     }
 
     function isGroupOwner(groupId) {
-      return isSignedIn() && groupOf(groupId).ownerUid == request.auth.uid;
+      return isSignedIn() && groupId != null && groupOf(groupId).ownerUid == request.auth.uid;
     }
 
-    // username -> uid lookup, used at signup to check availability and for admin password resets
+    // True when the signed-in user is the owner (admin) of the group that `uid` is in.
+    // Lets the planner see everyone's personal checklists/docs on the /admin dashboard.
+    function isAdminOf(uid) {
+      let userPath = /databases/$(database)/documents/users/$(uid);
+      return isSignedIn() && exists(userPath)
+        && get(userPath).data.groupId != null
+        && isGroupOwner(get(userPath).data.groupId);
+    }
+
+    function onlyChanged(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    // username -> uid lookup, used at signup to check availability
     match /usernames/{username} {
-      allow read: if true;
+      allow get: if true;
+      allow list: if false;
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
       allow update, delete: if false;
     }
@@ -36,79 +50,116 @@ service cloud.firestore {
       allow update: if isMe(uid);
     }
 
+    // join-code -> groupId lookup. Lets someone who isn't a member yet find the group by its code
+    // without being able to list or read every group.
+    match /groupCodes/{code} {
+      allow get: if isSignedIn();
+      allow list: if false;
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && groupOf(request.resource.data.groupId).ownerUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     match /groups/{groupId} {
-      allow read: if isGroupMember(groupId);
-      allow create: if isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
-      // membership changes (join/leave) go through arrayUnion/arrayRemove on memberUids only
-      allow update: if isGroupMember(groupId) || isSignedIn();
-      allow delete: if isGroupOwner(groupId);
+      allow read: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.memberUids == [request.auth.uid];
+      allow update: if
+        // owner can change anything (name, dates, hand over ownership, ...)
+        (isSignedIn() && resource.data.ownerUid == request.auth.uid)
+        // anyone signed in with the code can add *themselves* (join)
+        || (isSignedIn() && onlyChanged(['memberUids'])
+            && request.resource.data.memberUids.toSet() == resource.data.memberUids.toSet().union([request.auth.uid].toSet()))
+        // a member can remove *themselves* (leave)
+        || (isSignedIn() && request.auth.uid in resource.data.memberUids && onlyChanged(['memberUids'])
+            && request.resource.data.memberUids.toSet() == resource.data.memberUids.toSet().difference([request.auth.uid].toSet()));
+      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
     }
 
     match /documents/{docId} {
-      allow read, update, delete: if isMe(resource.data.ownerUid) || (resource.data.groupId != null && isGroupMember(resource.data.groupId));
-      allow create: if isMe(request.resource.data.ownerUid);
+      allow read: if isMe(resource.data.ownerUid)
+        || (resource.data.groupId != null && isGroupMember(resource.data.groupId))
+        || isAdminOf(resource.data.ownerUid);
+      allow update, delete: if isMe(resource.data.ownerUid);
+      allow create: if isMe(request.resource.data.ownerUid)
+        && (request.resource.data.groupId == null || isGroupMember(request.resource.data.groupId));
     }
 
     match /packingBags/{bagId} {
-      allow read, update, delete: if isMe(resource.data.ownerUid);
+      allow read: if isMe(resource.data.ownerUid) || isAdminOf(resource.data.ownerUid);
+      allow update, delete: if isMe(resource.data.ownerUid);
       allow create: if isMe(request.resource.data.ownerUid);
     }
 
     match /outfitItems/{itemId} {
-      allow read, update, delete: if isMe(resource.data.ownerUid);
+      allow read: if isMe(resource.data.ownerUid) || isAdminOf(resource.data.ownerUid);
+      allow update, delete: if isMe(resource.data.ownerUid);
       allow create: if isMe(request.resource.data.ownerUid);
     }
 
     match /suppliesItems/{itemId} {
-      allow read, update, delete: if isMe(resource.data.ownerUid) ||
-        (isSignedIn() && exists(/databases/$(database)/documents/users/$(resource.data.ownerUid)) &&
-         get(/databases/$(database)/documents/users/$(resource.data.ownerUid)).data.groupId != null &&
-         isGroupMember(get(/databases/$(database)/documents/users/$(resource.data.ownerUid)).data.groupId));
+      allow read: if isMe(resource.data.ownerUid) || isAdminOf(resource.data.ownerUid);
+      allow update, delete: if isMe(resource.data.ownerUid);
       allow create: if isMe(request.resource.data.ownerUid);
     }
 
     match /itineraryItems/{itemId} {
-      allow read, update: if (resource.data.groupId == null && isMe(resource.data.createdBy)) || (resource.data.groupId != null && isGroupMember(resource.data.groupId));
-      allow create: if isSignedIn();
-      allow delete: if isMe(resource.data.createdBy) || (resource.data.groupId != null && isGroupOwner(resource.data.groupId));
+      allow read, update: if (resource.data.groupId == null && isMe(resource.data.createdBy))
+        || (resource.data.groupId != null && isGroupMember(resource.data.groupId));
+      allow create: if isMe(request.resource.data.createdBy)
+        && (request.resource.data.groupId == null || isGroupMember(request.resource.data.groupId));
+      allow delete: if isMe(resource.data.createdBy)
+        || (resource.data.groupId != null && isGroupOwner(resource.data.groupId));
     }
 
     match /accommodationOptions/{optId} {
-      allow read, update: if isGroupMember(resource.data.groupId);
-      allow create: if isSignedIn() && isGroupMember(request.resource.data.groupId);
-      allow delete: if isGroupOwner(resource.data.groupId);
+      allow read: if isGroupMember(resource.data.groupId);
+      // members only touch the votes; the owner can also mark the final pick
+      allow update: if isGroupOwner(resource.data.groupId)
+        || (isGroupMember(resource.data.groupId) && onlyChanged(['votes']));
+      allow create: if isMe(request.resource.data.proposedBy) && isGroupMember(request.resource.data.groupId);
+      allow delete: if isMe(resource.data.proposedBy) || isGroupOwner(resource.data.groupId);
     }
 
     match /expenses/{expId} {
-      allow read, update, delete: if (resource.data.groupId == null && isMe(resource.data.paidBy)) || (resource.data.groupId != null && isGroupMember(resource.data.groupId));
-      allow create: if isSignedIn();
+      allow read: if (resource.data.groupId == null && isMe(resource.data.paidBy))
+        || (resource.data.groupId != null && isGroupMember(resource.data.groupId));
+      allow update, delete: if isMe(resource.data.paidBy)
+        || (resource.data.groupId != null && isGroupOwner(resource.data.groupId));
+      allow create: if isMe(request.resource.data.paidBy)
+        && (request.resource.data.groupId == null || isGroupMember(request.resource.data.groupId));
     }
 
-    // Spots are curated by the trip owner via /admin; everyone signed in can read & favorite them.
+    // Tourist spots, added by the planner via /admin. Everyone signed in can read them.
     match /spots/{spotId} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn(); // tighten to an admin check once you add one
+      allow create: if isMe(request.resource.data.createdBy);
+      allow update, delete: if isMe(resource.data.createdBy);
     }
 
     match /favorites/{favId} {
-      allow read, write: if isSignedIn() && request.resource.data.uid == request.auth.uid;
-      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow read, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
     }
 
     match /spotSubmissions/{subId} {
       allow read, update: if isGroupMember(resource.data.groupId);
-      allow create: if isSignedIn() && isGroupMember(request.resource.data.groupId);
+      allow create: if isMe(request.resource.data.submittedBy) && isGroupMember(request.resource.data.groupId);
+      allow delete: if isMe(resource.data.submittedBy) || isGroupOwner(resource.data.groupId);
     }
 
     match /activityLog/{entryId} {
       allow read: if isGroupMember(resource.data.groupId);
-      allow create: if isSignedIn() && isGroupMember(request.resource.data.groupId);
+      allow create: if isMe(request.resource.data.actorUid) && isGroupMember(request.resource.data.groupId);
       allow update, delete: if false;
     }
 
     match /announcements/{annId} {
       allow read: if isGroupMember(resource.data.groupId);
-      allow create: if isSignedIn() && isGroupMember(request.resource.data.groupId);
+      allow create: if isMe(request.resource.data.authorUid) && isGroupOwner(request.resource.data.groupId);
+      allow delete: if isGroupOwner(resource.data.groupId);
     }
   }
 }

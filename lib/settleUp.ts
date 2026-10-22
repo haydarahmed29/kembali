@@ -13,6 +13,7 @@ export function settleUp(expenses: Expense[]): Transfer[] {
   const balances = new Map<string, number>(); // positive = is owed money, negative = owes money
 
   for (const exp of expenses) {
+    if (!exp.splitAmong?.length || !(exp.amount > 0)) continue;
     const share = exp.amount / exp.splitAmong.length;
     for (const uid of exp.splitAmong) {
       balances.set(uid, (balances.get(uid) ?? 0) - share);

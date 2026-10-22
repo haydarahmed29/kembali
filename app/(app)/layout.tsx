@@ -3,11 +3,13 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/AuthProvider";
+import { useLocationSharing } from "@/lib/useLocationSharing";
 import { BottomNav } from "@/components/BottomNav";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
+  useLocationSharing();
 
   useEffect(() => {
     if (!loading && !user) router.replace("/");

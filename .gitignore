@@ -43,3 +43,6 @@ next-env.d.ts
 # Cloud Functions (its own package, separate node_modules/build output)
 functions/node_modules
 functions/lib
+
+# copied from node_modules by scripts/copy-sw-deps.mjs
+/public/firebase-sw/

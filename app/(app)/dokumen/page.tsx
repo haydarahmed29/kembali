@@ -13,7 +13,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { deleteObject, getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { db, storage } from "@/lib/firebase";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
@@ -35,21 +35,29 @@ export default function DokumenPage() {
         : query(collection(db, "documents"), where("groupId", "==", group?.id ?? "__none__"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(
       q,
-      (snap) => setDocs(snap.docs.map((d) => d.data() as Document)),
+      (snap) => setDocs(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as Document)),
       () => setDocs([])
     );
     return () => unsub();
   }, [user, group?.id, tab]);
 
   async function handleAddDriveLink() {
-    if (!user || !driveLink.trim()) return;
+    const link = driveLink.trim();
+    if (!user || !link) return;
+    if (!/^https?:\/\//i.test(link)) {
+      window.alert("Link-nya harus diawali https:// ya.");
+      return;
+    }
+    const name = window.prompt("Nama dokumen (misal: Tiket pesawat berangkat):", "Dokumen baru");
+    if (name === null) return;
     await addDoc(collection(db, "documents"), {
       ownerUid: user.uid,
       groupId: tab === "group" ? group?.id ?? null : null,
-      name: "Dokumen baru",
+      name: name.trim() || "Dokumen baru",
       category: "lainnya",
       sourceType: "drive_link",
-      url: driveLink.trim(),
+      url: link,
+      storagePath: null,
       createdAt: serverTimestamp(),
     });
     setDriveLink("");
@@ -57,11 +65,20 @@ export default function DokumenPage() {
 
   async function handleUpload(file: File) {
     if (!user) return;
+    if (file.type !== "application/pdf") {
+      window.alert("Cuma bisa upload file PDF.");
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      window.alert("Maksimal 20 MB per file.");
+      return;
+    }
     setUploading(true);
     try {
-      const path = `documents/${user.uid}/${Date.now()}-${file.name}`;
+      const safeName = file.name.replace(/[^\w.\- ]+/g, "_");
+      const path = `documents/${user.uid}/${Date.now()}-${safeName}`;
       const storageRef = ref(storage, path);
-      await uploadBytes(storageRef, file);
+      await uploadBytes(storageRef, file, { contentType: "application/pdf" });
       const url = await getDownloadURL(storageRef);
       await addDoc(collection(db, "documents"), {
         ownerUid: user.uid,
@@ -70,8 +87,11 @@ export default function DokumenPage() {
         category: "tiket",
         sourceType: "upload",
         url,
+        storagePath: path,
         createdAt: serverTimestamp(),
       });
+    } catch {
+      window.alert("Upload gagal. Cek koneksi lalu coba lagi.");
     } finally {
       setUploading(false);
     }
@@ -83,9 +103,13 @@ export default function DokumenPage() {
     await updateDoc(doc(db, "documents", id), { name: next.trim() });
   }
 
-  async function handleDelete(id: string) {
-    if (!window.confirm("Hapus dokumen ini?")) return;
-    await deleteDoc(doc(db, "documents", id));
+  async function handleDelete(d: Document) {
+    if (!window.confirm(`Hapus "${d.name}"?`)) return;
+    await deleteDoc(doc(db, "documents", d.id));
+    if (d.storagePath) {
+      // also free up the PDF in Storage; ignore if it's already gone
+      await deleteObject(ref(storage, d.storagePath)).catch(() => {});
+    }
   }
 
   return (
@@ -118,6 +142,8 @@ export default function DokumenPage() {
                 {d.category} · {d.sourceType === "upload" ? "tersimpan di storage" : "link Google Drive"}
               </div>
             </div>
+            {d.ownerUid === user?.uid && (
+            <>
             <button
               type="button"
               onClick={(e) => {
@@ -133,13 +159,15 @@ export default function DokumenPage() {
               type="button"
               onClick={(e) => {
                 e.preventDefault();
-                handleDelete(d.id);
+                handleDelete(d);
               }}
               aria-label="Hapus"
               className="w-10 h-10 rounded-xl bg-kb-bg flex items-center justify-center text-red-700"
             >
               ✕
             </button>
+            </>
+            )}
           </a>
         ))}
       </div>
@@ -151,8 +179,10 @@ export default function DokumenPage() {
             type="file"
             accept="application/pdf"
             className="hidden"
+            disabled={uploading}
             onChange={(e) => {
               const file = e.target.files?.[0];
+              e.target.value = ""; // allow picking the same file again later
               if (file) handleUpload(file);
             }}
           />

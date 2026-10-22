@@ -19,6 +19,7 @@ import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { AREAS, CATEGORIES } from "@/lib/exploreConfig";
 import { logActivity } from "@/lib/activityLog";
+import { promptDayAndTime } from "@/lib/time";
 import type { Spot, SpotSubmission } from "@/lib/types";
 
 function detectPlatform(url: string): "tiktok" | "instagram" | "maps" | "other" {
@@ -29,10 +30,12 @@ function detectPlatform(url: string): "tiktok" | "instagram" | "maps" | "other" 
 }
 
 export default function ExplorePage() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { group } = useGroup();
   const [area, setArea] = useState(AREAS[0]);
   const [category, setCategory] = useState<string | null>(null);
+  const [onlyFavorites, setOnlyFavorites] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const [spots, setSpots] = useState<Spot[]>([]);
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
   const [submissions, setSubmissions] = useState<SpotSubmission[]>([]);
@@ -46,9 +49,18 @@ export default function ExplorePage() {
     const q = category
       ? query(collection(db, "spots"), where("area", "==", area), where("category", "==", category))
       : query(collection(db, "spots"), where("area", "==", area));
-    const unsub = onSnapshot(q, (snap) => setSpots(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Spot)));
-    return () => unsub();
+    return onSnapshot(
+      q,
+      (snap) => setSpots(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Spot)),
+      () => setSpots([])
+    );
   }, [area, category]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   useEffect(() => {
     if (!user) return;
@@ -78,21 +90,33 @@ export default function ExplorePage() {
     }
   }
 
-  async function addToItinerary(name: string) {
-    if (!user) return;
-    const day = Number(window.prompt("Masukin ke hari ke-?", "1") ?? "1") || 1;
-    const time = window.prompt("Jam berapa?", "10:00") ?? "10:00";
+  async function addToItinerary(name: string): Promise<boolean> {
+    if (!user) return false;
+    const when = promptDayAndTime();
+    if (!when) return false;
     await addDoc(collection(db, "itineraryItems"), {
       groupId: group?.id ?? null,
-      day,
-      time,
+      day: when.day,
+      time: when.time,
       title: name,
       location: name,
+      // in a group the slot still goes to a vote (with your vote already on it); solo it's final straight away
       status: group ? "voting" : "final",
-      options: group ? [{ id: crypto.randomUUID(), label: name, votes: [], proposedBy: user.uid }] : [],
+      options: group ? [{ id: crypto.randomUUID(), label: name, votes: [user.uid], proposedBy: user.uid }] : [],
       createdBy: user.uid,
-      createdAt: new Date(),
+      createdAt: serverTimestamp(),
     });
+    if (group) {
+      await logActivity({
+        groupId: group.id,
+        actorUid: user.uid,
+        actorName: profile?.displayName ?? "Seseorang",
+        action: "itinerary_update",
+        message: `masukin "${name}" ke itinerary Hari ${when.day} jam ${when.time}`,
+      });
+    }
+    setToast(group ? `"${name}" masuk voting Hari ${when.day}, ${when.time}` : `"${name}" masuk itinerary Hari ${when.day}, ${when.time}`);
+    return true;
   }
 
   function addLinkToDraft() {
@@ -103,12 +127,14 @@ export default function ExplorePage() {
 
   async function submitNewSpot() {
     if (!user || !group || !newName.trim()) return;
+    // include a link still sitting in the input that wasn't added with "+"
+    const links = newLink.trim() ? [...newLinks, { url: newLink.trim(), platform: detectPlatform(newLink.trim()) }] : newLinks;
     await addDoc(collection(db, "spotSubmissions"), {
       groupId: group.id,
       name: newName.trim(),
       category,
       halal: newHalal,
-      referenceLinks: newLinks,
+      referenceLinks: links,
       submittedBy: user.uid,
       status: "pending",
       createdAt: serverTimestamp(),
@@ -116,22 +142,39 @@ export default function ExplorePage() {
     await logActivity({
       groupId: group.id,
       actorUid: user.uid,
-      actorName: "Seseorang",
+      actorName: profile?.displayName ?? "Seseorang",
       action: "spot_submitted",
       message: `mengusulkan tempat baru "${newName.trim()}"`,
     });
     setNewName("");
     setNewLinks([]);
+    setNewLink("");
     setNewHalal(null);
+    setToast("Tempat baru dikirim ke group");
   }
 
   async function proposeSubmission(sub: SpotSubmission) {
-    await updateDoc(doc(db, "spotSubmissions", sub.id), { status: "proposed_to_itinerary" });
-    await addToItinerary(sub.name);
+    const added = await addToItinerary(sub.name);
+    if (added) await updateDoc(doc(db, "spotSubmissions", sub.id), { status: "proposed_to_itinerary" });
   }
+
+  // favorites first, then most-favorited, then A–Z
+  const visibleSpots = spots
+    .filter((s) => !onlyFavorites || favoriteIds.has(s.id))
+    .sort(
+      (a, b) =>
+        Number(favoriteIds.has(b.id)) - Number(favoriteIds.has(a.id)) ||
+        (b.favoriteCount ?? 0) - (a.favoriteCount ?? 0) ||
+        a.name.localeCompare(b.name, "id")
+    );
 
   return (
     <div className="p-4 flex flex-col gap-3.5">
+      {toast && (
+        <div role="status" className="fixed left-4 right-4 top-4 mx-auto max-w-[440px] z-30 bg-kb-green text-kb-lime text-sm font-bold rounded-2xl px-4 py-3 shadow-lg">
+          ✓ {toast}
+        </div>
+      )}
       <div className="flex items-center justify-between gap-2.5">
         <h1 className="text-xl font-bold">Explore Bali</h1>
         <Link href="/kiblat" aria-label="Muslim Friendly" className="w-11 h-11 rounded-full bg-kb-green text-kb-lime flex items-center justify-center shrink-0">
@@ -160,6 +203,14 @@ export default function ExplorePage() {
       <div className="flex gap-2 overflow-x-auto">
         <button
           type="button"
+          onClick={() => setOnlyFavorites((v) => !v)}
+          aria-pressed={onlyFavorites}
+          className={`h-[34px] px-3.5 rounded-full text-xs font-bold shrink-0 ${onlyFavorites ? "bg-[#FDEEDC] text-[#E8720C]" : "bg-white text-[#3F4F44]"}`}
+        >
+          ♥ Favoritku
+        </button>
+        <button
+          type="button"
           onClick={() => setCategory(null)}
           className={`h-[34px] px-3.5 rounded-full text-xs font-bold shrink-0 ${category === null ? "border-[1.5px] border-kb-green bg-white" : "bg-white text-[#3F4F44]"}`}
         >
@@ -179,19 +230,37 @@ export default function ExplorePage() {
 
       <div className="flex items-baseline justify-between">
         <div className="text-[16px] font-bold">Spot di {area}</div>
-        <div className="text-xs text-kb-muted">{spots.length} tempat</div>
+        <div className="text-xs text-kb-muted">{visibleSpots.length} tempat · favorit duluan</div>
       </div>
 
-      {spots.length === 0 && <p className="text-sm text-kb-muted">Belum ada data spot di sini — admin bisa tambah lewat dashboard.</p>}
+      {visibleSpots.length === 0 && (
+        <p className="text-sm text-kb-muted">
+          {onlyFavorites ? "Belum ada favorit di sini — ketuk ♥ di spot yang kamu suka." : "Belum ada data spot di sini — admin bisa tambah lewat dashboard."}
+        </p>
+      )}
 
-      {spots.map((spot) => (
+      {visibleSpots.map((spot) => (
         <div key={spot.id} className="bg-white rounded-[22px] p-2.5 flex gap-3 items-center">
-          <div className="w-20 h-20 rounded-2xl bg-kb-bg shrink-0" />
+          <div className="w-20 h-20 rounded-2xl bg-kb-bg shrink-0 overflow-hidden flex items-center justify-center text-2xl">
+            {spot.imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- arbitrary remote image URLs
+              <img src={spot.imageUrl} alt="" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+            ) : (
+              CATEGORIES.find((c) => c.slug === spot.category)?.emoji ?? "📍"
+            )}
+          </div>
           <div className="flex-1 min-w-0 flex flex-col gap-1">
             <div className="text-[15px] font-bold">{spot.name}</div>
-            <div className="text-xs text-kb-muted">{spot.durationText ?? "—"}</div>
+            <div className="text-xs text-kb-muted">
+              {[CATEGORIES.find((c) => c.slug === spot.category)?.label, spot.durationText, spot.ticketPrice].filter(Boolean).join(" · ") || "—"}
+            </div>
+            {spot.mapsUrl && (
+              <a href={spot.mapsUrl} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-kb-green">
+                Maps ↗
+              </a>
+            )}
             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-lg self-start ${spot.halal === "halal" ? "bg-[#DCEFDC] text-[#1F6B3A]" : "bg-[#F3E6DD] text-[#8A4B2E]"}`}>
-              {spot.halal === "halal" ? "Halal area" : "Area wisata umum"}
+              {spot.halal === "halal" ? "✓ Halal" : "Non-halal / umum"}
             </span>
           </div>
           <div className="flex flex-col gap-1.5 shrink-0">

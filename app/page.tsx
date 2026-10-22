@@ -1,18 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { usernameToFakeEmail } from "@/lib/usernameAuth";
+import { useAuth } from "@/lib/AuthProvider";
 
 export default function WelcomePage() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // already signed in (e.g. opening the installed app from the Home Screen) → straight in
+  useEffect(() => {
+    if (!authLoading && user) router.replace("/home");
+  }, [authLoading, user, router]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -21,8 +28,15 @@ export default function WelcomePage() {
     try {
       await signInWithEmailAndPassword(auth, usernameToFakeEmail(username), password);
       router.push("/home");
-    } catch {
-      setError("Username atau password salah.");
+    } catch (err) {
+      const code = (err as { code?: string })?.code ?? "";
+      setError(
+        code === "auth/too-many-requests"
+          ? "Kebanyakan coba. Tunggu sebentar lalu coba lagi."
+          : code === "auth/network-request-failed"
+            ? "Koneksi internet bermasalah."
+            : "Username atau password salah."
+      );
     } finally {
       setLoading(false);
     }
