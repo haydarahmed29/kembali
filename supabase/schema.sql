@@ -124,7 +124,9 @@ create table if not exists accommodation_options (
   source text not null check (source in ('agoda', 'traveloka', 'airbnb', 'maps', 'other')),
   image_url text,
   votes uuid[] not null default '{}',
-  chosen boolean not null default false,
+  chosen boolean not null default false, -- more than one row can be chosen: a multi-stay trip, different hotel per leg
+  nights integer,
+  address text, -- plain-text address/area; used as the directions origin on Explore's maps links
   proposed_by uuid not null references auth.users(id),
   created_at timestamptz not null default now()
 );
@@ -561,19 +563,22 @@ begin
 end;
 $$;
 
+-- Toggles chosen on/off for this one option. Not exclusive — the owner can mark more than one
+-- option chosen to represent a multi-stay trip (different hotels for different legs).
 create or replace function choose_accommodation(p_option_id uuid)
 returns void
 language plpgsql security definer set search_path = public as $$
 declare
   v_group_id uuid;
   v_owner uuid;
+  v_current boolean;
 begin
-  select group_id into v_group_id from accommodation_options where id = p_option_id;
+  select group_id, chosen into v_group_id, v_current from accommodation_options where id = p_option_id;
   if v_group_id is null then raise exception 'option not found'; end if;
   select owner_uid into v_owner from groups where id = v_group_id;
   if v_owner is distinct from auth.uid() then raise exception 'only the group owner can choose'; end if;
 
-  update accommodation_options set chosen = (id = p_option_id) where group_id = v_group_id;
+  update accommodation_options set chosen = not coalesce(v_current, false) where id = p_option_id;
 end;
 $$;
 

@@ -6,4 +6,5 @@ export const CATEGORIES: { slug: string; label: string; emoji: string }[] = [
   { slug: "seafood", label: "Seafood", emoji: "🦐" },
   { slug: "pura", label: "Pura", emoji: "⛩️" },
   { slug: "air_terjun", label: "Air Terjun", emoji: "💧" },
+  { slug: "oleh_oleh", label: "Oleh-oleh", emoji: "🛍️" },
 ];

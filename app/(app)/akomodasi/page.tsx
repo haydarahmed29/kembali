@@ -67,6 +67,9 @@ export default function AkomodasiPage() {
     const title = window.prompt("Nama villa/penginapan:");
     if (title === null) return; // cancelled
     const priceText = window.prompt("Harga (misal: Rp 3,2 jt / 4 malam):", "") ?? "";
+    const nightsRaw = window.prompt("Nginep berapa malam di sini?", "") ?? "";
+    const nights = nightsRaw.trim() ? Number.parseInt(nightsRaw.trim(), 10) : null;
+    const address = window.prompt("Alamat/area (opsional — dipakai buat ngitung rute dari sini ke tempat wisata):", "") ?? "";
     const name = title.trim() || "Villa";
     const { data } = await supabase
       .from("accommodation_options")
@@ -79,6 +82,8 @@ export default function AkomodasiPage() {
         image_url: null, // filled in a few seconds later by the link-unfurl Edge Function
         votes: [user.uid], // the proposer votes for it by default
         chosen: false,
+        nights: Number.isFinite(nights) && nights && nights > 0 ? nights : null,
+        address: address.trim() || null,
         proposed_by: user.uid,
       })
       .select()
@@ -118,7 +123,8 @@ export default function AkomodasiPage() {
 
   async function choose(option: AccommodationOption) {
     if (!user || !group || !owner) return;
-    if (!window.confirm(`Tutup voting & tetapkan "${option.title}" sebagai tempat tinggal?`)) return;
+    const verb = option.chosen ? "Batal tetapkan" : "Tetapkan";
+    if (!window.confirm(`${verb} "${option.title}" sebagai tempat nginep? (boleh lebih dari satu kalau pindah-pindah hotel)`)) return;
     const { error: chooseError } = await supabase.rpc("choose_accommodation", { p_option_id: option.id });
     if (chooseError) return;
     await logActivity({
@@ -126,7 +132,7 @@ export default function AkomodasiPage() {
       actorUid: user.uid,
       actorName: profile?.displayName ?? "Owner",
       action: "accommodation_update",
-      message: `nutup voting akomodasi → "${option.title}"`,
+      message: option.chosen ? `batal tetapkan akomodasi "${option.title}"` : `tetapkan akomodasi → "${option.title}"`,
     });
   }
 
@@ -144,7 +150,8 @@ export default function AkomodasiPage() {
   }
 
   const votedCount = new Set(options.flatMap((o) => o.votes)).size;
-  const chosen = options.find((o) => o.chosen);
+  const chosenList = options.filter((o) => o.chosen);
+  const totalNights = chosenList.reduce((sum, o) => sum + (o.nights ?? 0), 0);
   const sorted = [...options].sort((a, b) => Number(!!b.chosen) - Number(!!a.chosen) || b.votes.length - a.votes.length);
 
   return (
@@ -153,7 +160,9 @@ export default function AkomodasiPage() {
         <div className="flex-1 flex flex-col">
           <div className="font-bold text-[18px]">Mau Tinggal di Mana?</div>
           <div className="text-xs text-kb-muted">
-            {chosen ? `Udah fix: ${chosen.title}` : `${votedCount} dari ${group.memberUids.length} udah vote`}
+            {chosenList.length > 0
+              ? `Udah fix: ${chosenList.map((o) => o.title).join(" → ")}${totalNights ? ` · ${totalNights} malam total` : ""}`
+              : `${votedCount} dari ${group.memberUids.length} udah vote`}
           </div>
         </div>
         <Link href="/history" aria-label="Riwayat" className="w-11 h-11 rounded-full bg-white flex items-center justify-center">
@@ -162,7 +171,7 @@ export default function AkomodasiPage() {
       </div>
 
       <div className="bg-kb-lime rounded-2xl px-3.5 py-2.5 text-xs text-[#2D3A1A] leading-relaxed">
-        Siapa aja boleh nambah pilihan villa, yang lain tinggal vote (1 orang 1 suara). Kalau udah sepakat, Owner yang tutup voting-nya.
+        Siapa aja boleh nambah pilihan villa, yang lain tinggal vote (1 orang 1 suara). Kalau udah sepakat, Owner yang tetapkan jadi tempat nginep — bisa lebih dari satu kalau pindah-pindah hotel pas trip.
       </div>
 
       <div className="bg-white rounded-[20px] px-3.5 py-2.5 flex items-center gap-2.5">
@@ -206,7 +215,9 @@ export default function AkomodasiPage() {
                   <div className="flex-1 text-[15px] font-bold truncate">{opt.title}</div>
                   {opt.chosen && <span className="text-[10px] font-extrabold bg-kb-lime px-2 py-0.5 rounded-lg shrink-0">FIX</span>}
                 </div>
-                <div className="text-xs text-kb-muted">{opt.priceText || "Harga belum diisi"}</div>
+                <div className="text-xs text-kb-muted">
+                  {[opt.priceText || "Harga belum diisi", opt.nights ? `${opt.nights} malam` : null].filter(Boolean).join(" · ")}
+                </div>
                 <a href={opt.link} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-kb-green">
                   Lihat link ↗
                 </a>
@@ -218,7 +229,7 @@ export default function AkomodasiPage() {
               </div>
               <span className="text-xs font-bold">{opt.votes.length} suara</span>
             </div>
-            {!chosen && (
+            {!opt.chosen && (
               <button
                 type="button"
                 onClick={() => vote(opt)}
@@ -228,9 +239,9 @@ export default function AkomodasiPage() {
               </button>
             )}
             <div className="flex items-center gap-4 px-1">
-              {owner && !opt.chosen && (
+              {owner && (
                 <button type="button" onClick={() => choose(opt)} className="text-[11px] font-bold text-kb-green underline">
-                  Tetapkan sebagai pilihan final
+                  {opt.chosen ? "Batal tetapkan" : "Tetapkan jadi tempat nginep"}
                 </button>
               )}
               {canDelete && (
@@ -245,7 +256,7 @@ export default function AkomodasiPage() {
 
       {options.length === 0 && <p className="text-sm text-kb-muted">Belum ada opsi villa. Tempel link di atas buat mulai.</p>}
 
-      {!chosen && options.length > 0 && (
+      {chosenList.length === 0 && options.length > 0 && (
         <div className="text-[11px] text-kb-muted px-1">
           Belum vote: {group.memberUids.filter((uid) => !options.some((o) => o.votes.includes(uid))).length} orang
         </div>

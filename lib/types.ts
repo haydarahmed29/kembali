@@ -106,7 +106,9 @@ export interface AccommodationOption {
   source: "agoda" | "traveloka" | "airbnb" | "maps" | "other";
   imageUrl: string | null; // fetched by the link-unfurl Edge Function
   votes: string[]; // uids — one vote per member across all options
-  chosen?: boolean; // set by the owner when the group settles on this one
+  chosen?: boolean; // toggled by the owner — more than one can be chosen (multi-stay: different hotels for different legs)
+  nights: number | null; // how many nights the group stays here
+  address: string | null; // plain-text address/area, used as the "from here" origin for Explore's maps links
   proposedBy: string;
   createdAt: string;
 }

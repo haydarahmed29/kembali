@@ -103,6 +103,8 @@ export function rowToAccommodationOption(r: Row): AccommodationOption {
     imageUrl: r.image_url,
     votes: r.votes ?? [],
     chosen: r.chosen,
+    nights: r.nights ?? null,
+    address: r.address ?? null,
     proposedBy: r.proposed_by,
     createdAt: r.created_at,
   };

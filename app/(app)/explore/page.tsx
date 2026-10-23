@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabase";
 import { rowToSpot, rowToSpotSubmission } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
+import { useChosenStay } from "@/lib/useChosenStay";
+import { buildMapsHref, spotMapsQuery } from "@/lib/maps";
 import { AREAS, CATEGORIES } from "@/lib/exploreConfig";
 import { logActivity } from "@/lib/activityLog";
 import { promptDayAndTime } from "@/lib/time";
@@ -21,6 +23,7 @@ function detectPlatform(url: string): "tiktok" | "instagram" | "maps" | "other" 
 export default function ExplorePage() {
   const { user, profile } = useAuth();
   const { group } = useGroup();
+  const { originAddress } = useChosenStay(group?.id);
   const [area, setArea] = useState(AREAS[0]);
   const [category, setCategory] = useState<string | null>(null);
   const [onlyFavorites, setOnlyFavorites] = useState(false);
@@ -184,14 +187,24 @@ export default function ExplorePage() {
       )}
       <div className="flex items-center justify-between gap-2.5">
         <h1 className="text-xl font-bold">Explore Bali</h1>
-        <Link href="/kiblat" aria-label="Muslim Friendly" className="w-11 h-11 rounded-full bg-kb-green text-kb-lime flex items-center justify-center shrink-0">
-          🧭
-        </Link>
+        <div className="flex items-center gap-2 shrink-0">
+          <Link href="/tips" aria-label="Tips & Panduan" className="w-11 h-11 rounded-full bg-white flex items-center justify-center">
+            💡
+          </Link>
+          <Link href="/kiblat" aria-label="Muslim Friendly" className="w-11 h-11 rounded-full bg-kb-green text-kb-lime flex items-center justify-center">
+            🧭
+          </Link>
+        </div>
       </div>
 
-      <Link href="/kiblat" className="bg-kb-green rounded-[18px] px-3.5 py-3 flex items-center gap-2.5 text-white">
-        <div className="flex-1 text-[13px] font-bold">Muslim Friendly · Kompas Kiblat &amp; Jam Sholat</div>
+      <Link href="/tips" className="bg-kb-green rounded-[18px] px-3.5 py-3 flex items-center gap-2.5 text-white">
+        <div className="flex-1 text-[13px] font-bold">Tips &amp; Panduan · Ke Nusa Penida, Bahasa Bali, rekomendasi mood</div>
         <span className="text-kb-lime">→</span>
+      </Link>
+
+      <Link href="/kiblat" className="bg-white rounded-[18px] px-3.5 py-3 flex items-center gap-2.5">
+        <div className="flex-1 text-[13px] font-bold">Muslim Friendly · Kompas Kiblat &amp; Jam Sholat</div>
+        <span className="text-kb-green">→</span>
       </Link>
 
       <div className="flex gap-2 overflow-x-auto">
@@ -261,11 +274,14 @@ export default function ExplorePage() {
             <div className="text-xs text-kb-muted">
               {[CATEGORIES.find((c) => c.slug === spot.category)?.label, spot.durationText, spot.ticketPrice].filter(Boolean).join(" · ") || "—"}
             </div>
-            {spot.mapsUrl && (
-              <a href={spot.mapsUrl} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-kb-green">
-                Maps ↗
-              </a>
-            )}
+            <a
+              href={buildMapsHref(spotMapsQuery(spot.name, spot.area), originAddress)}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[11px] font-semibold text-kb-green"
+            >
+              {originAddress ? "Rute dari penginapan ↗" : "Maps ↗"}
+            </a>
           </div>
           <div className="flex flex-col gap-1.5 shrink-0">
             <button
