@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { useChosenStay } from "@/lib/useChosenStay";
 import { useLiveLocations } from "@/lib/useLiveLocations";
+import { useGroupMembers } from "@/lib/useGroupMembers";
 import { buildMapsHref } from "@/lib/maps";
 import { fillItineraryCoords } from "@/lib/geocode";
 import { dayColor, personColor } from "@/lib/map/config";
@@ -27,6 +28,10 @@ export default function PetaPage() {
   const scopeId = group?.id ?? null;
   const me = useMemo(() => (user ? { uid: user.uid, name: profile?.displayName ?? "Aku" } : null), [user, profile?.displayName]);
   const live = useLiveLocations(group?.id, me);
+  const members = useGroupMembers(group?.memberUids);
+  // pins show the initial of whoever added the place (Pindei → P, Haydar → H)
+  const nameOf = (uid: string) =>
+    members.find((m) => m.uid === uid)?.displayName ?? (uid === user?.uid ? (profile?.displayName ?? "") : "");
 
   useEffect(() => {
     if (!user) return;
@@ -62,16 +67,16 @@ export default function PetaPage() {
         name,
         lat: i.lat!,
         lng: i.lng!,
-        label: day === "all" ? `${i.day}.${n}` : String(n),
+        label: (nameOf(i.createdBy).trim()[0] ?? "•").toUpperCase(),
         color: dayColor(i.day),
         routeGroup: `d${i.day}`,
-        subtitle: `Hari ${i.day} · ${i.time}`,
+        subtitle: `Hari ${i.day} · ${i.time} · urutan ke-${n}${nameOf(i.createdBy) ? ` · dari ${nameOf(i.createdBy)}` : ""}`,
         note: i.location && i.location !== i.title ? i.location : undefined,
         href: buildMapsHref(`${i.lat},${i.lng}`, originAddress),
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `located` is derived from these
-  }, [items, day, originAddress]);
+  }, [items, day, originAddress, members]);
 
   const people: MapPerson[] = [
     ...live.others.map((p) => ({ id: p.uid, name: p.name, lat: p.lat, lng: p.lng, color: personColor(p.uid), updatedAt: p.at })),
@@ -94,7 +99,7 @@ export default function PetaPage() {
         </Link>
         <div className="flex-1">
           <h1 className="text-xl font-bold m-0">Peta Trip</h1>
-          <div className="text-xs text-kb-muted">{group ? group.name : "Solo trip"} · garis = urutan itinerary</div>
+          <div className="text-xs text-kb-muted">{group ? group.name : "Solo trip"} · huruf = yang nambahin · garis = urutan</div>
         </div>
       </div>
 

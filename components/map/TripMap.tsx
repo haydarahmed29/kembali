@@ -125,7 +125,7 @@ export default function TripMap({ places = [], people = [], showRoute = true, fo
       el.textContent = p.label ?? "•";
       return new maplibregl.Marker({ element: el, anchor: "center" })
         .setLngLat([p.lng, p.lat])
-        .setPopup(new maplibregl.Popup({ offset: 18, closeButton: true, maxWidth: "240px" }).setDOMContent(placePopup(p)))
+        .setPopup(new maplibregl.Popup({ offset: 18, closeButton: true, maxWidth: "240px", focusAfterOpen: false }).setDOMContent(placePopup(p)))
         .addTo(map);
     });
   }, [places]);
