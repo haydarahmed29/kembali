@@ -18,9 +18,9 @@ data and a group member's own stuff stay separate from the group's shared data.
 | `itinerary_items`        | `group_id`, `day`, `time`, `title`, `status`, `options` (jsonb), `created_by` | `status: "voting"` uses `options` (`[{id, label, votes: [uid], proposedBy}]`); `status: "final"` uses `title` directly. Voting/adding an option/finalizing go through RPCs for atomicity. |
 | `accommodation_options`  | `group_id`, `title`, `price_text`, `link`, `source`, `image_url`, `votes[]`, `proposed_by` | `image_url`/`title` filled in by the `link-unfurl` Edge Function. Votes/`chosen` only change via RPC or the Edge Function (service role) — no client UPDATE policy. |
 | `expenses`                | `group_id`, `day`, `title`, `category`, `amount`, `paid_by`, `split_among[]` | Settle-up math lives client-side in `lib/settleUp.ts`. |
-| `spots`                   | `area`, `category`, `name`, `halal`, `ticket_price`, `duration_text`, `image_url` | Curated from `/admin`. Target ~30 per category per area. |
+| `spots`                   | `area`, `category`, `name`, `ticket_price`, `duration_text`, `image_url`, `maps_url` | Curated from `/admin`. Target ~30 per category per area. |
 | `favorites`               | `uid`, `spot_id` (composite primary key)                                | Primary key on `(uid, spot_id)`, so a favorite can't be duplicated. |
-| `spot_submissions`        | `group_id`, `name`, `category`, `halal`, `reference_links` (jsonb), `submitted_by`, `status` | Member-submitted places not yet in `spots`, with TikTok/IG/Maps reference links. |
+| `spot_submissions`        | `group_id`, `name`, `category`, `reference_links` (jsonb), `submitted_by`, `status` | Member-submitted places not yet in `spots`, with TikTok/IG/Maps reference links. |
 | `activity_log`            | `group_id`, `actor_uid`, `actor_name`, `action`, `message`               | Powers `/history`. Append-only. |
 | `announcements`           | `group_id`, `author_uid`, `message`                                      | Sent from `/admin`. |
 

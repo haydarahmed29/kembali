@@ -37,8 +37,8 @@ export default function AdminPage() {
   const [spotName, setSpotName] = useState("");
   const [spotArea, setSpotArea] = useState(AREAS[0]);
   const [spotCategory, setSpotCategory] = useState(CATEGORIES[0].slug);
-  const [spotHalal, setSpotHalal] = useState<"halal" | "umum">("halal");
   const [spotMaps, setSpotMaps] = useState("");
+  const [spotImage, setSpotImage] = useState("");
   const [spotDuration, setSpotDuration] = useState("");
   const [spotPrice, setSpotPrice] = useState("");
 
@@ -187,16 +187,16 @@ export default function AdminPage() {
       category: spotCategory,
       name: spotName.trim(),
       description: "",
-      halal: spotHalal,
       ticket_price: spotPrice.trim() || null,
       duration_text: spotDuration.trim() || null,
       favorite_count: 0,
-      image_url: null,
+      image_url: /^https?:\/\//i.test(spotImage.trim()) ? spotImage.trim() : null,
       maps_url: /^https?:\/\//i.test(spotMaps.trim()) ? spotMaps.trim() : null,
       created_by: user.uid,
     });
     setSpotName("");
     setSpotMaps("");
+    setSpotImage("");
     setSpotDuration("");
     setSpotPrice("");
   }
@@ -349,7 +349,13 @@ export default function AdminPage() {
             <input
               value={spotMaps}
               onChange={(e) => setSpotMaps(e.target.value)}
-              placeholder="Link Google Maps (opsional)"
+              placeholder="Link Google Maps (biar jaraknya bisa dicek)"
+              className="h-11 rounded-2xl border border-kb-border px-3.5 text-sm bg-kb-card"
+            />
+            <input
+              value={spotImage}
+              onChange={(e) => setSpotImage(e.target.value)}
+              placeholder="Link gambar (opsional)"
               className="h-11 rounded-2xl border border-kb-border px-3.5 text-sm bg-kb-card"
             />
             <div className="grid grid-cols-2 gap-2">
@@ -365,14 +371,6 @@ export default function AdminPage() {
                 placeholder="Tiket, misal Rp 50rb"
                 className="h-11 rounded-2xl border border-kb-border px-3.5 text-sm bg-kb-card"
               />
-            </div>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setSpotHalal("halal")} className={`h-9 px-3 rounded-full text-xs font-bold ${spotHalal === "halal" ? "bg-[#DCEFDC] text-[#1F6B3A]" : "bg-kb-card text-kb-muted"}`}>
-                ✓ Halal
-              </button>
-              <button type="button" onClick={() => setSpotHalal("umum")} className={`h-9 px-3 rounded-full text-xs font-semibold ${spotHalal === "umum" ? "bg-[#F3E6DD] text-[#8A4B2E]" : "bg-kb-card text-kb-muted"}`}>
-                Non-halal / umum
-              </button>
             </div>
             <button type="button" onClick={addSpot} className="h-11 rounded-2xl bg-kb-lime text-kb-ink font-bold text-sm self-start px-5">
               Tambah ke Explore
@@ -390,7 +388,7 @@ export default function AdminPage() {
                   <div className="flex-1 min-w-0">
                     <div className="font-bold truncate">{s.name}</div>
                     <div className="text-[11px] text-kb-muted">
-                      {s.area} · {CATEGORIES.find((c) => c.slug === s.category)?.label ?? s.category} · {s.halal === "halal" ? "Halal" : "Umum"}
+                      {s.area} · {CATEGORIES.find((c) => c.slug === s.category)?.label ?? s.category}
                     </div>
                   </div>
                   <button type="button" onClick={() => removeSpot(s)} className="text-xs text-red-700">

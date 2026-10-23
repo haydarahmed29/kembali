@@ -135,7 +135,6 @@ export interface Spot {
   category: string; // SpotCategory.slug
   name: string;
   description: string;
-  halal: "halal" | "umum"; // simple tag, not an official certification
   ticketPrice: string | null;
   durationText: string | null;
   favoriteCount: number;
@@ -149,7 +148,6 @@ export interface SpotSubmission {
   groupId: string;
   name: string;
   category: string | null;
-  halal: "halal" | "non_halal" | null;
   referenceLinks: { url: string; platform: "tiktok" | "instagram" | "maps" | "other" }[];
   submittedBy: string;
   status: "pending" | "proposed_to_itinerary";

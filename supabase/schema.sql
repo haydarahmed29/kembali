@@ -150,7 +150,6 @@ create table if not exists spots (
   category text not null,
   name text not null,
   description text not null default '',
-  halal text not null check (halal in ('halal', 'umum')),
   ticket_price text,
   duration_text text,
   favorite_count integer not null default 0,
@@ -172,7 +171,6 @@ create table if not exists spot_submissions (
   group_id uuid not null references groups(id) on delete cascade,
   name text not null,
   category text,
-  halal text check (halal in ('halal', 'non_halal')),
   reference_links jsonb not null default '[]'::jsonb, -- [{url, platform}]
   submitted_by uuid not null references auth.users(id),
   status text not null check (status in ('pending', 'proposed_to_itinerary')),

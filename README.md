@@ -3,8 +3,8 @@
 > Rencanain bareng, biar Kem.Bali lagi.
 
 PWA trip planner buat solo trip atau group trip ke Bali — dokumen, packing/outfit,
-itinerary + voting, budget + split bill, explore tempat wisata (dengan tag halal &
-kompas kiblat), dan dashboard admin buat yang jadi planner.
+itinerary + voting, budget + split bill, explore tempat wisata (plus muslim-friendly
+finder lewat kompas kiblat), dan dashboard admin buat yang jadi planner.
 
 Stack: **Next.js (App Router) + Tailwind v4** di depan, **Supabase** (Auth, Postgres,
 Storage, Realtime, Edge Functions) di belakang, deploy ke **Vercel**, kode di **GitHub**.
@@ -99,7 +99,7 @@ di console browser (F12).
 | `/packing` | 3 tab: Koper/Tas, Outfit (auto sesuai gender), Tambahan (obat & keperluan) |
 | `/itinerary` | Rencana harian + voting per slot |
 | `/budget` | Catatan biaya + hitung siapa transfer ke siapa |
-| `/explore` | Spot wisata per area/kategori, tag halal, usul tempat baru |
+| `/explore` | Spot wisata per area/kategori, usul tempat baru |
 | `/akomodasi` | Voting villa/penginapan dengan preview link |
 | `/profile` | Kebutuhan pribadi (tetap ada walau keluar group) + keluar group |
 | `/history` | Log semua perubahan di group |

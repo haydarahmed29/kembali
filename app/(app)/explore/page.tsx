@@ -32,7 +32,6 @@ export default function ExplorePage() {
   const [newName, setNewName] = useState("");
   const [newLink, setNewLink] = useState("");
   const [newLinks, setNewLinks] = useState<{ url: string; platform: string }[]>([]);
-  const [newHalal, setNewHalal] = useState<"halal" | "non_halal" | null>(null);
 
   useEffect(() => {
     const load = () => {
@@ -144,7 +143,6 @@ export default function ExplorePage() {
       group_id: group.id,
       name: newName.trim(),
       category,
-      halal: newHalal,
       reference_links: links,
       submitted_by: user.uid,
       status: "pending",
@@ -159,7 +157,6 @@ export default function ExplorePage() {
     setNewName("");
     setNewLinks([]);
     setNewLink("");
-    setNewHalal(null);
     setToast("Tempat baru dikirim ke group");
   }
 
@@ -269,9 +266,6 @@ export default function ExplorePage() {
                 Maps ↗
               </a>
             )}
-            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-lg self-start ${spot.halal === "halal" ? "bg-[#DCEFDC] text-[#1F6B3A]" : "bg-[#F3E6DD] text-[#8A4B2E]"}`}>
-              {spot.halal === "halal" ? "✓ Halal" : "Non-halal / umum"}
-            </span>
           </div>
           <div className="flex flex-col gap-1.5 shrink-0">
             <button
@@ -322,22 +316,6 @@ export default function ExplorePage() {
                 ))}
               </div>
             )}
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setNewHalal("halal")}
-                className={`h-9 px-3 rounded-full text-xs font-bold ${newHalal === "halal" ? "bg-[#DCEFDC] text-[#1F6B3A]" : "bg-kb-card text-kb-muted"}`}
-              >
-                ✓ Halal
-              </button>
-              <button
-                type="button"
-                onClick={() => setNewHalal("non_halal")}
-                className={`h-9 px-3 rounded-full text-xs font-semibold ${newHalal === "non_halal" ? "bg-[#F3E6DD] text-[#8A4B2E]" : "bg-kb-card text-kb-muted"}`}
-              >
-                Non-halal
-              </button>
-            </div>
             <button type="button" onClick={submitNewSpot} className="h-12 rounded-2xl bg-kb-lime text-kb-ink font-bold text-sm">
               Kirim ke group
             </button>
