@@ -3,34 +3,16 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { doc, updateDoc } from "firebase/firestore";
-import { signOut } from "firebase/auth";
-import { auth, db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { isOwner, leaveGroup } from "@/lib/group";
-import { enablePushNotifications } from "@/lib/push";
 
 export default function ProfilePage() {
   const router = useRouter();
   const { user, profile } = useAuth();
   const { group } = useGroup();
   const [leaving, setLeaving] = useState(false);
-  const [pushStatus, setPushStatus] = useState<string | null>(null);
-
-  async function handleEnablePush() {
-    if (!user) return;
-    const result = await enablePushNotifications(user.uid);
-    setPushStatus(
-      result === "granted"
-        ? "✓ Notifikasi aktif di HP ini."
-        : result === "unsupported"
-          ? "Belum bisa: di iPhone, install dulu lewat Share → Add to Home Screen, lalu buka dari ikon Kem.Bali."
-          : result === "denied"
-            ? "Izin notifikasi ditolak — aktifkan lagi di pengaturan HP."
-            : "Gagal aktifin notifikasi, coba lagi nanti."
-    );
-  }
 
   async function handleLeave() {
     if (!user || !group) return;
@@ -48,11 +30,11 @@ export default function ProfilePage() {
 
   async function changeDepartureDate(value: string) {
     if (!user) return;
-    await updateDoc(doc(db, "users", user.uid), { departureDate: value || null });
+    await supabase.from("profiles").update({ departure_date: value || null }).eq("id", user.uid);
   }
 
   async function handleSignOut() {
-    await signOut(auth);
+    await supabase.auth.signOut();
     router.push("/");
   }
 
@@ -107,14 +89,6 @@ export default function ProfilePage() {
           <span className="text-xs font-bold">Buka →</span>
         </Link>
       )}
-
-      <button type="button" onClick={handleEnablePush} className="bg-white rounded-2xl px-3.5 py-3 flex items-center gap-3 text-left">
-        <div className="flex-1">
-          <div className="text-sm font-bold">Notifikasi voting</div>
-          <div className="text-xs text-kb-muted">{pushStatus ?? "Dapat pemberitahuan pas ada voting baru"}</div>
-        </div>
-        <span className="text-xs font-bold text-kb-green">Aktifkan</span>
-      </button>
 
       {group && (
         <div className="bg-white rounded-[22px] p-4 flex flex-col gap-2.5 border border-[#EAD9CE]">

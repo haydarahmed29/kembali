@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { addDoc, collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, where } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
+import { rowToAccommodationOption, rowToItineraryItem, rowToSpot } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { useGroupMembers } from "@/lib/useGroupMembers";
@@ -44,22 +44,61 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!group || !owner) return;
-    const unsubs = [
-      onSnapshot(query(collection(db, "itineraryItems"), where("groupId", "==", group.id), where("status", "==", "voting")), (snap) =>
-        setItineraryOpen(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as ItineraryItem))
-      ),
-      onSnapshot(query(collection(db, "accommodationOptions"), where("groupId", "==", group.id)), (snap) =>
-        setAccommodations(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AccommodationOption))
-      ),
+
+    supabase
+      .from("itinerary_items")
+      .select("*")
+      .eq("group_id", group.id)
+      .eq("status", "voting")
+      .then(({ data }) => data && setItineraryOpen(data.map(rowToItineraryItem)));
+    supabase
+      .from("accommodation_options")
+      .select("*")
+      .eq("group_id", group.id)
+      .then(({ data }) => data && setAccommodations(data.map(rowToAccommodationOption)));
+
+    const channels = [
+      supabase
+        .channel(`admin-itin-${group.id}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "itinerary_items", filter: `group_id=eq.${group.id}` }, () => {
+          supabase
+            .from("itinerary_items")
+            .select("*")
+            .eq("group_id", group.id)
+            .eq("status", "voting")
+            .then(({ data }) => data && setItineraryOpen(data.map(rowToItineraryItem)));
+        })
+        .subscribe(),
+      supabase
+        .channel(`admin-accom-${group.id}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "accommodation_options", filter: `group_id=eq.${group.id}` }, () => {
+          supabase
+            .from("accommodation_options")
+            .select("*")
+            .eq("group_id", group.id)
+            .then(({ data }) => data && setAccommodations(data.map(rowToAccommodationOption)));
+        })
+        .subscribe(),
     ];
-    return () => unsubs.forEach((u) => u());
+    return () => { channels.forEach((c) => supabase.removeChannel(c)); };
   }, [group, owner]);
 
   useEffect(() => {
     if (!user || !owner) return;
-    return onSnapshot(query(collection(db, "spots"), where("createdBy", "==", user.uid)), (snap) =>
-      setMySpots(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Spot).sort((a, b) => a.area.localeCompare(b.area) || a.name.localeCompare(b.name)))
-    );
+    const load = () =>
+      supabase
+        .from("spots")
+        .select("*")
+        .eq("created_by", user.uid)
+        .then(({ data }) =>
+          data && setMySpots(data.map(rowToSpot).sort((a, b) => a.area.localeCompare(b.area) || a.name.localeCompare(b.name)))
+        );
+    load();
+    const channel = supabase
+      .channel(`admin-spots-${user.uid}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "spots", filter: `created_by=eq.${user.uid}` }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [user, owner]);
 
   // One set of listeners per member — and they're torn down when the member list changes,
@@ -70,40 +109,72 @@ export default function AdminPage() {
     const uids = memberKey.split(",");
     const patch = (uid: string, part: Partial<MemberStats>) =>
       setStats((prev) => ({ ...prev, [uid]: { ...EMPTY_STATS, ...prev[uid], ...part } }));
-    const ignore = () => {};
 
-    const unsubs = uids.flatMap((uid) => [
-      onSnapshot(query(collection(db, "documents"), where("ownerUid", "==", uid)), (snap) => patch(uid, { docs: snap.size }), ignore),
-      onSnapshot(
-        query(collection(db, "suppliesItems"), where("ownerUid", "==", uid)),
-        (snap) => patch(uid, { supplies: { total: snap.size, done: snap.docs.filter((d) => (d.data() as SuppliesItem).checked).length } }),
-        ignore
-      ),
-      onSnapshot(
-        query(collection(db, "outfitItems"), where("ownerUid", "==", uid)),
-        (snap) => patch(uid, { outfit: { total: snap.size, done: snap.docs.filter((d) => (d.data() as OutfitItem).done).length } }),
-        ignore
-      ),
-      onSnapshot(
-        query(collection(db, "packingBags"), where("ownerUid", "==", uid)),
-        (snap) => {
-          const items = snap.docs.flatMap((d) => (d.data() as PackingBag).items ?? []);
+    const loadDocs = (uid: string) =>
+      supabase
+        .from("documents")
+        .select("id", { count: "exact", head: true })
+        .eq("owner_uid", uid)
+        .then(({ count }) => patch(uid, { docs: count ?? 0 }));
+    const loadSupplies = (uid: string) =>
+      supabase
+        .from("supplies_items")
+        .select("checked")
+        .eq("owner_uid", uid)
+        .then(({ data }) => {
+          const rows = (data ?? []) as Pick<SuppliesItem, "checked">[];
+          patch(uid, { supplies: { total: rows.length, done: rows.filter((r) => r.checked).length } });
+        });
+    const loadOutfit = (uid: string) =>
+      supabase
+        .from("outfit_items")
+        .select("done")
+        .eq("owner_uid", uid)
+        .then(({ data }) => {
+          const rows = (data ?? []) as Pick<OutfitItem, "done">[];
+          patch(uid, { outfit: { total: rows.length, done: rows.filter((r) => r.done).length } });
+        });
+    const loadBags = (uid: string) =>
+      supabase
+        .from("packing_bags")
+        .select("items")
+        .eq("owner_uid", uid)
+        .then(({ data }) => {
+          const items = ((data ?? []) as Pick<PackingBag, "items">[]).flatMap((d) => d.items ?? []);
           patch(uid, { bags: { total: items.length, in: items.filter((i) => i.in).length } });
-        },
-        ignore
-      ),
+        });
+
+    uids.forEach((uid) => {
+      loadDocs(uid);
+      loadSupplies(uid);
+      loadOutfit(uid);
+      loadBags(uid);
+    });
+
+    const channels = uids.flatMap((uid) => [
+      supabase
+        .channel(`admin-docs-${uid}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `owner_uid=eq.${uid}` }, () => loadDocs(uid))
+        .subscribe(),
+      supabase
+        .channel(`admin-supplies-${uid}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "supplies_items", filter: `owner_uid=eq.${uid}` }, () => loadSupplies(uid))
+        .subscribe(),
+      supabase
+        .channel(`admin-outfit-${uid}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "outfit_items", filter: `owner_uid=eq.${uid}` }, () => loadOutfit(uid))
+        .subscribe(),
+      supabase
+        .channel(`admin-bags-${uid}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "packing_bags", filter: `owner_uid=eq.${uid}` }, () => loadBags(uid))
+        .subscribe(),
     ]);
-    return () => unsubs.forEach((u) => u());
+    return () => { channels.forEach((c) => supabase.removeChannel(c)); };
   }, [memberKey, owner]);
 
   async function sendAnnouncement() {
     if (!user || !group || !announcement.trim()) return;
-    await addDoc(collection(db, "announcements"), {
-      groupId: group.id,
-      authorUid: user.uid,
-      message: announcement.trim(),
-      createdAt: serverTimestamp(),
-    });
+    await supabase.from("announcements").insert({ group_id: group.id, author_uid: user.uid, message: announcement.trim() });
     setAnnouncement("");
     setSent(true);
     setTimeout(() => setSent(false), 2500);
@@ -111,18 +182,18 @@ export default function AdminPage() {
 
   async function addSpot() {
     if (!user || !spotName.trim()) return;
-    await addDoc(collection(db, "spots"), {
+    await supabase.from("spots").insert({
       area: spotArea,
       category: spotCategory,
       name: spotName.trim(),
       description: "",
       halal: spotHalal,
-      ticketPrice: spotPrice.trim() || null,
-      durationText: spotDuration.trim() || null,
-      favoriteCount: 0,
-      imageUrl: null,
-      mapsUrl: /^https?:\/\//i.test(spotMaps.trim()) ? spotMaps.trim() : null,
-      createdBy: user.uid,
+      ticket_price: spotPrice.trim() || null,
+      duration_text: spotDuration.trim() || null,
+      favorite_count: 0,
+      image_url: null,
+      maps_url: /^https?:\/\//i.test(spotMaps.trim()) ? spotMaps.trim() : null,
+      created_by: user.uid,
     });
     setSpotName("");
     setSpotMaps("");
@@ -132,7 +203,7 @@ export default function AdminPage() {
 
   async function removeSpot(spot: Spot) {
     if (!window.confirm(`Hapus "${spot.name}" dari Explore?`)) return;
-    await deleteDoc(doc(db, "spots", spot.id));
+    await supabase.from("spots").delete().eq("id", spot.id);
   }
 
   if (loading) {
@@ -191,7 +262,6 @@ export default function AdminPage() {
                   <th className="py-2 px-2 font-semibold">Outfit</th>
                   <th className="py-2 px-2 font-semibold">Keperluan</th>
                   <th className="py-2 px-2 font-semibold">Lokasi</th>
-                  <th className="py-2 px-2 font-semibold">Notif</th>
                 </tr>
               </thead>
               <tbody>
@@ -224,7 +294,6 @@ export default function AdminPage() {
                           <span className="text-kb-muted">Off</span>
                         )}
                       </td>
-                      <td className="py-3 px-2">{m.fcmTokens?.length ? "✓" : <span className="text-kb-muted">—</span>}</td>
                     </tr>
                   );
                 })}
@@ -232,7 +301,7 @@ export default function AdminPage() {
             </table>
           </div>
           <p className="m-0 text-[11px] text-kb-muted">
-            Lupa password? Firebase Console → Authentication → cari <code>username@kembali.app</code> → reset/hapus akunnya.
+            Lupa password? Supabase Dashboard → Authentication → Users → cari <code>username@kembali.app</code> → reset/hapus akunnya.
           </p>
         </section>
 
@@ -249,7 +318,7 @@ export default function AdminPage() {
               <button type="button" onClick={sendAnnouncement} className="h-11 rounded-2xl bg-kb-green text-kb-lime font-bold text-sm px-5">
                 Kirim
               </button>
-              <span className="text-xs text-kb-muted">{sent ? "✓ Terkirim — muncul di Home semua anggota" : "Muncul di Home (tanpa push notif)"}</span>
+              <span className="text-xs text-kb-muted">{sent ? "✓ Terkirim — muncul di Home semua anggota" : "Muncul di Home"}</span>
             </div>
           </section>
 

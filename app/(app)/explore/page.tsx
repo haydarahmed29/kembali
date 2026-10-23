@@ -2,19 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
+import { rowToSpot, rowToSpotSubmission } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { AREAS, CATEGORIES } from "@/lib/exploreConfig";
@@ -46,14 +35,18 @@ export default function ExplorePage() {
   const [newHalal, setNewHalal] = useState<"halal" | "non_halal" | null>(null);
 
   useEffect(() => {
-    const q = category
-      ? query(collection(db, "spots"), where("area", "==", area), where("category", "==", category))
-      : query(collection(db, "spots"), where("area", "==", area));
-    return onSnapshot(
-      q,
-      (snap) => setSpots(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Spot)),
-      () => setSpots([])
-    );
+    const load = () => {
+      let q = supabase.from("spots").select("*").eq("area", area);
+      if (category) q = q.eq("category", category);
+      q.then(({ data }) => setSpots(data ? data.map(rowToSpot) : []));
+    };
+    load();
+
+    const channel = supabase
+      .channel(`spots-${area}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "spots", filter: `area=eq.${area}` }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [area, category]);
 
   useEffect(() => {
@@ -64,9 +57,19 @@ export default function ExplorePage() {
 
   useEffect(() => {
     if (!user) return;
-    const q = query(collection(db, "favorites"), where("uid", "==", user.uid));
-    const unsub = onSnapshot(q, (snap) => setFavoriteIds(new Set(snap.docs.map((d) => d.data().spotId as string))));
-    return () => unsub();
+    const load = () =>
+      supabase
+        .from("favorites")
+        .select("spot_id")
+        .eq("uid", user.uid)
+        .then(({ data }) => setFavoriteIds(new Set((data ?? []).map((d) => d.spot_id as string))));
+    load();
+
+    const channel = supabase
+      .channel(`favorites-${user.uid}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "favorites", filter: `uid=eq.${user.uid}` }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [user]);
 
   useEffect(() => {
@@ -75,18 +78,27 @@ export default function ExplorePage() {
       setSubmissions([]);
       return;
     }
-    const q = query(collection(db, "spotSubmissions"), where("groupId", "==", group.id));
-    const unsub = onSnapshot(q, (snap) => setSubmissions(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as SpotSubmission)));
-    return () => unsub();
+    const load = () =>
+      supabase
+        .from("spot_submissions")
+        .select("*")
+        .eq("group_id", group.id)
+        .then(({ data }) => setSubmissions(data ? data.map(rowToSpotSubmission) : []));
+    load();
+
+    const channel = supabase
+      .channel(`spot-submissions-${group.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "spot_submissions", filter: `group_id=eq.${group.id}` }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [group]);
 
   async function toggleFavorite(spot: Spot) {
     if (!user) return;
-    const favId = `${user.uid}_${spot.id}`;
     if (favoriteIds.has(spot.id)) {
-      await deleteDoc(doc(db, "favorites", favId));
+      await supabase.from("favorites").delete().eq("uid", user.uid).eq("spot_id", spot.id);
     } else {
-      await setDoc(doc(db, "favorites", favId), { uid: user.uid, spotId: spot.id });
+      await supabase.from("favorites").insert({ uid: user.uid, spot_id: spot.id });
     }
   }
 
@@ -94,8 +106,8 @@ export default function ExplorePage() {
     if (!user) return false;
     const when = promptDayAndTime();
     if (!when) return false;
-    await addDoc(collection(db, "itineraryItems"), {
-      groupId: group?.id ?? null,
+    await supabase.from("itinerary_items").insert({
+      group_id: group?.id ?? null,
       day: when.day,
       time: when.time,
       title: name,
@@ -103,8 +115,7 @@ export default function ExplorePage() {
       // in a group the slot still goes to a vote (with your vote already on it); solo it's final straight away
       status: group ? "voting" : "final",
       options: group ? [{ id: crypto.randomUUID(), label: name, votes: [user.uid], proposedBy: user.uid }] : [],
-      createdBy: user.uid,
-      createdAt: serverTimestamp(),
+      created_by: user.uid,
     });
     if (group) {
       await logActivity({
@@ -129,15 +140,14 @@ export default function ExplorePage() {
     if (!user || !group || !newName.trim()) return;
     // include a link still sitting in the input that wasn't added with "+"
     const links = newLink.trim() ? [...newLinks, { url: newLink.trim(), platform: detectPlatform(newLink.trim()) }] : newLinks;
-    await addDoc(collection(db, "spotSubmissions"), {
-      groupId: group.id,
+    await supabase.from("spot_submissions").insert({
+      group_id: group.id,
       name: newName.trim(),
       category,
       halal: newHalal,
-      referenceLinks: links,
-      submittedBy: user.uid,
+      reference_links: links,
+      submitted_by: user.uid,
       status: "pending",
-      createdAt: serverTimestamp(),
     });
     await logActivity({
       groupId: group.id,
@@ -155,7 +165,7 @@ export default function ExplorePage() {
 
   async function proposeSubmission(sub: SpotSubmission) {
     const added = await addToItinerary(sub.name);
-    if (added) await updateDoc(doc(db, "spotSubmissions", sub.id), { status: "proposed_to_itinerary" });
+    if (added) await supabase.from("spot_submissions").update({ status: "proposed_to_itinerary" }).eq("id", sub.id);
   }
 
   // favorites first, then most-favorited, then A–Z

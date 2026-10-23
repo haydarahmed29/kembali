@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, onSnapshot, orderBy, query, where, type Timestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
+import { rowToActivityLogEntry } from "@/lib/mappers";
 import { useGroup } from "@/lib/useGroup";
 import type { ActivityLogEntry } from "@/lib/types";
 
@@ -11,10 +11,35 @@ export default function HistoryPage() {
   const [entries, setEntries] = useState<ActivityLogEntry[]>([]);
 
   useEffect(() => {
-    if (!group) return;
-    const q = query(collection(db, "activityLog"), where("groupId", "==", group.id), orderBy("createdAt", "desc"));
-    const unsub = onSnapshot(q, (snap) => setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as ActivityLogEntry)));
-    return () => unsub();
+    if (!group) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting local state when the dependency goes away, not reacting to an external system
+      setEntries([]);
+      return;
+    }
+    let active = true;
+    supabase
+      .from("activity_log")
+      .select("*")
+      .eq("group_id", group.id)
+      .order("created_at", { ascending: false })
+      .then(({ data }) => {
+        if (!active || !data) return;
+        setEntries(data.map(rowToActivityLogEntry));
+      });
+
+    const channel = supabase
+      .channel(`activity-log-${group.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "activity_log", filter: `group_id=eq.${group.id}` },
+        (payload) => setEntries((prev) => [rowToActivityLogEntry(payload.new as Record<string, unknown>), ...prev])
+      )
+      .subscribe();
+
+    return () => {
+      active = false;
+      supabase.removeChannel(channel);
+    };
   }, [group]);
 
   if (!group) {
@@ -51,9 +76,11 @@ export default function HistoryPage() {
   );
 }
 
-function formatTime(ts: Timestamp | undefined) {
-  if (!ts?.toDate) return "";
-  return ts.toDate().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+function formatTime(iso: string | undefined) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
 }
 
 function groupByDay(entries: ActivityLogEntry[]): [string, ActivityLogEntry[]][] {
@@ -61,7 +88,7 @@ function groupByDay(entries: ActivityLogEntry[]): [string, ActivityLogEntry[]][]
   today.setHours(0, 0, 0, 0);
   const map = new Map<string, ActivityLogEntry[]>();
   for (const entry of entries) {
-    const date = entry.createdAt?.toDate ? entry.createdAt.toDate() : new Date();
+    const date = entry.createdAt ? new Date(entry.createdAt) : new Date();
     date.setHours(0, 0, 0, 0);
     const diffDays = Math.round((today.getTime() - date.getTime()) / 86400000);
     const label = diffDays === 0 ? "Hari ini" : diffDays === 1 ? "Kemarin" : date.toLocaleDateString("id-ID", { day: "numeric", month: "long" });

@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, runTransaction, serverTimestamp, updateDoc, where } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
+import { rowToItineraryItem } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { isOwner } from "@/lib/group";
 import { logActivity } from "@/lib/activityLog";
 import { promptDayAndTime } from "@/lib/time";
-import type { ItineraryItem, ItineraryOption } from "@/lib/types";
+import type { ItineraryItem } from "@/lib/types";
 
 export default function ItineraryPage() {
   const { user, profile } = useAuth();
@@ -21,15 +21,21 @@ export default function ItineraryPage() {
 
   useEffect(() => {
     if (!user) return;
-    const q =
-      scopeId == null
-        ? query(collection(db, "itineraryItems"), where("createdBy", "==", user.uid), where("groupId", "==", null), orderBy("day"), orderBy("time"))
-        : query(collection(db, "itineraryItems"), where("groupId", "==", scopeId), orderBy("day"), orderBy("time"));
-    return onSnapshot(
-      q,
-      (snap) => setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as ItineraryItem)),
-      () => setItems([])
-    );
+    const load = () => {
+      const q =
+        scopeId == null
+          ? supabase.from("itinerary_items").select("*").eq("created_by", user.uid).is("group_id", null).order("day").order("time")
+          : supabase.from("itinerary_items").select("*").eq("group_id", scopeId).order("day").order("time");
+      q.then(({ data }) => setItems(data ? data.map(rowToItineraryItem) : []));
+    };
+    load();
+
+    const filter = scopeId == null ? `created_by=eq.${user.uid}` : `group_id=eq.${scopeId}`;
+    const channel = supabase
+      .channel(`itinerary-${scopeId == null ? user.uid : scopeId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "itinerary_items", filter }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [user, scopeId]);
 
   async function addItem() {
@@ -40,17 +46,16 @@ export default function ItineraryPage() {
     if (!when) return;
 
     // the proposer automatically votes for their own idea
-    const option: ItineraryOption = { id: crypto.randomUUID(), label: title.trim(), votes: [user.uid], proposedBy: user.uid };
-    await addDoc(collection(db, "itineraryItems"), {
-      groupId: scopeId,
+    const option = { id: crypto.randomUUID(), label: title.trim(), votes: [user.uid], proposedBy: user.uid };
+    await supabase.from("itinerary_items").insert({
+      group_id: scopeId,
       day: when.day,
       time: when.time,
       title: title.trim(),
       location: "",
       status: group ? "voting" : "final",
       options: group ? [option] : [],
-      createdBy: user.uid,
-      createdAt: serverTimestamp(),
+      created_by: user.uid,
     });
 
     if (group) {
@@ -68,16 +73,7 @@ export default function ItineraryPage() {
     if (!user) return;
     const label = window.prompt(`Opsi lain buat Hari ${item.day} jam ${item.time}:`);
     if (!label?.trim()) return;
-    const ref = doc(db, "itineraryItems", item.id);
-    await runTransaction(db, async (tx) => {
-      const snap = await tx.get(ref);
-      if (!snap.exists()) return;
-      const current = (snap.data().options ?? []) as ItineraryOption[];
-      // adding an option also moves your vote to it
-      const options = current.map((o) => ({ ...o, votes: o.votes.filter((v) => v !== user.uid) }));
-      options.push({ id: crypto.randomUUID(), label: label.trim(), votes: [user.uid], proposedBy: user.uid });
-      tx.update(ref, { options });
-    });
+    await supabase.rpc("add_itinerary_option", { p_item_id: item.id, p_label: label.trim() });
     if (group) {
       await logActivity({
         groupId: group.id,
@@ -91,19 +87,7 @@ export default function ItineraryPage() {
 
   async function vote(item: ItineraryItem, optionId: string) {
     if (!user) return;
-    const ref = doc(db, "itineraryItems", item.id);
-    // transaction so two people voting at the same moment don't overwrite each other's vote
-    const label = await runTransaction(db, async (tx) => {
-      const snap = await tx.get(ref);
-      if (!snap.exists() || snap.data().status !== "voting") return null;
-      const options = ((snap.data().options ?? []) as ItineraryOption[]).map((opt) => {
-        const votes = opt.votes.filter((v) => v !== user.uid);
-        if (opt.id === optionId) votes.push(user.uid);
-        return { ...opt, votes };
-      });
-      tx.update(ref, { options });
-      return options.find((o) => o.id === optionId)?.label ?? "";
-    });
+    const { data: label } = await supabase.rpc("cast_itinerary_vote", { p_item_id: item.id, p_option_id: optionId });
     if (group && label) {
       await logActivity({
         groupId: group.id,
@@ -120,7 +104,7 @@ export default function ItineraryPage() {
     const winner = item.options.find((o) => o.id === optionId);
     if (!winner) return;
     if (!window.confirm(`Tutup voting & pilih "${winner.label}"?`)) return;
-    await updateDoc(doc(db, "itineraryItems", item.id), { status: "final", title: winner.label });
+    await supabase.rpc("finalize_itinerary", { p_item_id: item.id, p_option_id: optionId });
     if (group) {
       await logActivity({
         groupId: group.id,
@@ -134,7 +118,7 @@ export default function ItineraryPage() {
 
   async function removeItem(item: ItineraryItem) {
     if (!window.confirm(`Hapus "${item.title}" dari itinerary?`)) return;
-    await deleteDoc(doc(db, "itineraryItems", item.id));
+    await supabase.from("itinerary_items").delete().eq("id", item.id);
     if (group && user) {
       await logActivity({
         groupId: group.id,

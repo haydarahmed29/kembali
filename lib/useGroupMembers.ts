@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
-import { db } from "./firebase";
+import { supabase } from "./supabase";
+import { rowToProfile } from "./mappers";
 import type { UserProfile } from "./types";
 
 /** Live profiles of every group member (live so shared locations and names stay current). */
@@ -12,28 +12,44 @@ export function useGroupMembers(memberUids: string[] | undefined) {
 
   useEffect(() => {
     const uids = key ? key.split(",") : [];
-    const unsubs = uids.map((uid) =>
-      onSnapshot(
-        doc(db, "users", uid),
-        (snap) => {
+    if (uids.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting local state when the dependency goes away, not reacting to an external system
+      setByUid({});
+      return;
+    }
+
+    let active = true;
+    supabase
+      .from("profiles")
+      .select("*")
+      .in("id", uids)
+      .then(({ data }) => {
+        if (!active || !data) return;
+        setByUid((prev) => {
+          const next = { ...prev };
+          for (const row of data) next[row.id] = rowToProfile(row);
+          return next;
+        });
+      });
+
+    const channels = uids.map((uid) =>
+      supabase
+        .channel(`member-${uid}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "profiles", filter: `id=eq.${uid}` }, (payload) => {
           setByUid((prev) => {
             const next = { ...prev };
-            if (snap.exists()) next[uid] = snap.data() as UserProfile;
-            else delete next[uid];
+            if (payload.eventType === "DELETE") delete next[uid];
+            else next[uid] = rowToProfile(payload.new as Record<string, unknown>);
             return next;
           });
-        },
-        () => {
-          // no permission (e.g. they just left the group) — just drop them from the list
-          setByUid((prev) => {
-            const next = { ...prev };
-            delete next[uid];
-            return next;
-          });
-        }
-      )
+        })
+        .subscribe()
     );
-    return () => unsubs.forEach((u) => u());
+
+    return () => {
+      active = false;
+      channels.forEach((c) => supabase.removeChannel(c));
+    };
   }, [key]);
 
   const uids = key ? key.split(",") : [];

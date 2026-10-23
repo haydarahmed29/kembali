@@ -2,22 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  addDoc,
-  arrayRemove,
-  arrayUnion,
-  collection,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-  writeBatch,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
+import { rowToAccommodationOption } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { isOwner } from "@/lib/group";
@@ -49,13 +35,25 @@ export default function AkomodasiPage() {
   const owner = isOwner(group, user?.uid);
 
   useEffect(() => {
-    if (!group) return;
-    const q = query(collection(db, "accommodationOptions"), where("groupId", "==", group.id), orderBy("createdAt", "desc"));
-    return onSnapshot(
-      q,
-      (snap) => setOptions(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AccommodationOption)),
-      () => setOptions([])
-    );
+    if (!group) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting local state when the dependency goes away, not reacting to an external system
+      setOptions([]);
+      return;
+    }
+    const load = () =>
+      supabase
+        .from("accommodation_options")
+        .select("*")
+        .eq("group_id", group.id)
+        .order("created_at", { ascending: false })
+        .then(({ data }) => data && setOptions(data.map(rowToAccommodationOption)));
+    load();
+
+    const channel = supabase
+      .channel(`accommodation-${group.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "accommodation_options", filter: `group_id=eq.${group.id}` }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [group]);
 
   async function addOption() {
@@ -70,22 +68,27 @@ export default function AkomodasiPage() {
     if (title === null) return; // cancelled
     const priceText = window.prompt("Harga (misal: Rp 3,2 jt / 4 malam):", "") ?? "";
     const name = title.trim() || "Villa";
-    await addDoc(collection(db, "accommodationOptions"), {
-      groupId: group.id,
-      title: name,
-      priceText: priceText.trim(),
-      link: url,
-      source: detectSource(url),
-      imageUrl: null, // filled in a few seconds later by the onAccommodationOptionCreate Cloud Function
-      votes: [user.uid], // the proposer votes for it by default
-      chosen: false,
-      proposedBy: user.uid,
-      createdAt: serverTimestamp(),
-    });
-    // move the proposer's vote off any other option
-    await Promise.all(
-      options.filter((o) => o.votes.includes(user.uid)).map((o) => updateDoc(doc(db, "accommodationOptions", o.id), { votes: arrayRemove(user.uid) }))
-    );
+    const { data } = await supabase
+      .from("accommodation_options")
+      .insert({
+        group_id: group.id,
+        title: name,
+        price_text: priceText.trim(),
+        link: url,
+        source: detectSource(url),
+        image_url: null, // filled in a few seconds later by the link-unfurl Edge Function
+        votes: [user.uid], // the proposer votes for it by default
+        chosen: false,
+        proposed_by: user.uid,
+      })
+      .select()
+      .single();
+
+    if (data?.id) {
+      // best-effort — the card just shows the source badge without a photo if this fails
+      supabase.functions.invoke("link-unfurl", { body: { url, optionId: data.id } }).catch(() => {});
+    }
+
     await logActivity({
       groupId: group.id,
       actorUid: user.uid,
@@ -96,19 +99,12 @@ export default function AkomodasiPage() {
     setLink("");
   }
 
-  /** One vote per person: voting here removes your vote from every other option (atomically). */
+  /** One vote per person: voting here removes your vote from every other option (atomically, via RPC). */
   async function vote(option: AccommodationOption) {
     if (!user || !group) return;
     const already = option.votes.includes(user.uid);
-    const batch = writeBatch(db);
-    for (const o of options) {
-      if (o.id === option.id) {
-        batch.update(doc(db, "accommodationOptions", o.id), { votes: already ? arrayRemove(user.uid) : arrayUnion(user.uid) });
-      } else if (o.votes.includes(user.uid)) {
-        batch.update(doc(db, "accommodationOptions", o.id), { votes: arrayRemove(user.uid) });
-      }
-    }
-    await batch.commit();
+    const { error: voteError } = await supabase.rpc("vote_accommodation", { p_option_id: option.id });
+    if (voteError) return;
     if (!already) {
       await logActivity({
         groupId: group.id,
@@ -123,11 +119,8 @@ export default function AkomodasiPage() {
   async function choose(option: AccommodationOption) {
     if (!user || !group || !owner) return;
     if (!window.confirm(`Tutup voting & tetapkan "${option.title}" sebagai tempat tinggal?`)) return;
-    const batch = writeBatch(db);
-    for (const o of options) {
-      batch.update(doc(db, "accommodationOptions", o.id), { chosen: o.id === option.id });
-    }
-    await batch.commit();
+    const { error: chooseError } = await supabase.rpc("choose_accommodation", { p_option_id: option.id });
+    if (chooseError) return;
     await logActivity({
       groupId: group.id,
       actorUid: user.uid,
@@ -139,7 +132,7 @@ export default function AkomodasiPage() {
 
   async function remove(option: AccommodationOption) {
     if (!window.confirm(`Hapus opsi "${option.title}"?`)) return;
-    await deleteDoc(doc(db, "accommodationOptions", option.id));
+    await supabase.from("accommodation_options").delete().eq("id", option.id);
   }
 
   if (!group) {

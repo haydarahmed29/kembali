@@ -3,8 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { usernameToFakeEmail } from "@/lib/usernameAuth";
 import { useAuth } from "@/lib/AuthProvider";
 
@@ -26,14 +25,18 @@ export default function WelcomePage() {
     setError(null);
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, usernameToFakeEmail(username), password);
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: usernameToFakeEmail(username),
+        password,
+      });
+      if (signInError) throw signInError;
       router.push("/home");
     } catch (err) {
-      const code = (err as { code?: string })?.code ?? "";
+      const message = (err as { message?: string })?.message ?? "";
       setError(
-        code === "auth/too-many-requests"
+        /rate limit|too many/i.test(message)
           ? "Kebanyakan coba. Tunggu sebentar lalu coba lagi."
-          : code === "auth/network-request-failed"
+          : /network|fetch/i.test(message)
             ? "Koneksi internet bermasalah."
             : "Username atau password salah."
       );

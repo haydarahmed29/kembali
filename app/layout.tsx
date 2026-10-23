@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/lib/AuthProvider";
-import { RegisterServiceWorker } from "@/components/RegisterServiceWorker";
 
 export const metadata: Metadata = {
   title: "Kem.Bali",
@@ -36,7 +35,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-full bg-kb-bg text-kb-ink">
         <AuthProvider>
-          <RegisterServiceWorker />
           <div className="app-shell">{children}</div>
         </AuthProvider>
       </body>

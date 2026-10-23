@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { collection, doc, limit, onSnapshot, orderBy, query, updateDoc, where, type Timestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
+import { rowToAnnouncement } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup, daysUntil } from "@/lib/useGroup";
 import { useGroupMembers } from "@/lib/useGroupMembers";
@@ -23,13 +23,36 @@ export default function HomePage() {
   const owner = isOwner(group, user?.uid);
 
   useEffect(() => {
-    if (!group) return;
-    const q = query(collection(db, "announcements"), where("groupId", "==", group.id), orderBy("createdAt", "desc"), limit(1));
-    return onSnapshot(
-      q,
-      (snap) => setAnnouncement(snap.empty ? null : ({ id: snap.docs[0].id, ...snap.docs[0].data() } as Announcement)),
-      () => setAnnouncement(null)
-    );
+    if (!group) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting local state when the dependency goes away, not reacting to an external system
+      setAnnouncement(null);
+      return;
+    }
+    let active = true;
+    supabase
+      .from("announcements")
+      .select("*")
+      .eq("group_id", group.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        if (!active) return;
+        setAnnouncement(data && data.length > 0 ? rowToAnnouncement(data[0]) : null);
+      });
+
+    const channel = supabase
+      .channel(`announcements-${group.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "announcements", filter: `group_id=eq.${group.id}` },
+        (payload) => setAnnouncement(rowToAnnouncement(payload.new as Record<string, unknown>))
+      )
+      .subscribe();
+
+    return () => {
+      active = false;
+      supabase.removeChannel(channel);
+    };
   }, [group]);
 
   async function toggleShareLocation() {
@@ -44,13 +67,13 @@ export default function HomePage() {
       }
       navigator.geolocation.getCurrentPosition(
         async () => {
-          await updateDoc(doc(db, "users", user.uid), { shareLocation: true });
+          await supabase.from("profiles").update({ share_location: true }).eq("id", user.uid);
         },
         () => setLocError("Izin lokasi ditolak. Aktifkan di pengaturan browser dulu ya."),
         { enableHighAccuracy: true, timeout: 15_000 }
       );
     } else {
-      await updateDoc(doc(db, "users", user.uid), { shareLocation: false, lastLocation: null });
+      await supabase.from("profiles").update({ share_location: false, last_location: null }).eq("id", user.uid);
     }
   }
 
@@ -198,12 +221,14 @@ function formatDate(iso: string) {
   return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 }
 
-function formatAgo(ts: Timestamp | undefined | null) {
-  if (!ts?.toDate) return "baru aja";
-  const mins = Math.round((Date.now() - ts.toDate().getTime()) / 60000);
+function formatAgo(iso: string | undefined | null) {
+  if (!iso) return "baru aja";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "baru aja";
+  const mins = Math.round((Date.now() - date.getTime()) / 60000);
   if (mins < 1) return "baru aja";
   if (mins < 60) return `${mins} mnt lalu`;
   const hours = Math.round(mins / 60);
   if (hours < 24) return `${hours} jam lalu`;
-  return ts.toDate().toLocaleDateString("id-ID", { day: "numeric", month: "short" });
+  return date.toLocaleDateString("id-ID", { day: "numeric", month: "short" });
 }

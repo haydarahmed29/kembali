@@ -3,9 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { isValidUsername, normalizeUsername, usernameToFakeEmail } from "@/lib/usernameAuth";
 import type { Gender } from "@/lib/types";
 
@@ -34,40 +32,46 @@ export default function DaftarPage() {
 
     setLoading(true);
     try {
-      const usernameRef = doc(db, "usernames", normalized);
-      const taken = await getDoc(usernameRef);
-      if (taken.exists()) {
+      const { data: available, error: checkError } = await supabase.rpc("username_available", {
+        p_username: normalized,
+      });
+      if (checkError) throw checkError;
+      if (!available) {
         setError("Username udah dipakai, coba yang lain.");
         setLoading(false);
         return;
       }
 
-      const cred = await createUserWithEmailAndPassword(auth, usernameToFakeEmail(normalized), password);
-      const uid = cred.user.uid;
-
-      await setDoc(doc(db, "users", uid), {
-        uid,
-        username: normalized,
-        displayName: displayName.trim() || normalized,
-        gender,
-        groupId: null,
-        role: null,
-        departureDate: null,
-        shareLocation: false,
-        fcmTokens: [],
-        createdAt: serverTimestamp(),
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: usernameToFakeEmail(normalized),
+        password,
       });
-      await setDoc(usernameRef, { uid });
+      if (signUpError) throw signUpError;
+      const uid = signUpData.user?.id;
+      if (!uid) throw new Error("Gagal daftar, coba lagi.");
+
+      const { error: insertError } = await supabase.from("profiles").insert({
+        id: uid,
+        username: normalized,
+        display_name: displayName.trim() || normalized,
+        gender,
+        group_id: null,
+        role: null,
+        departure_date: null,
+        share_location: false,
+        seeded: {},
+      });
+      if (insertError) throw insertError;
 
       router.push("/mode");
     } catch (err) {
-      const code = (err as { code?: string })?.code ?? "";
+      const message = (err as { message?: string })?.message ?? "";
       setError(
-        code === "auth/email-already-in-use"
+        /already registered|duplicate/i.test(message)
           ? "Username udah dipakai, coba yang lain."
-          : code === "auth/network-request-failed"
+          : /network|fetch/i.test(message)
             ? "Koneksi internet bermasalah."
-            : code === "auth/weak-password"
+            : /password/i.test(message)
               ? "Password terlalu lemah, minimal 6 karakter."
               : "Gagal daftar, coba lagi."
       );

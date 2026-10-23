@@ -1,20 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-} from "firebase/firestore";
-import { deleteObject, getDownloadURL, ref, uploadBytes } from "firebase/storage";
-import { db, storage } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
+import { rowToDocument } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import type { Document } from "@/lib/types";
@@ -29,16 +17,21 @@ export default function DokumenPage() {
 
   useEffect(() => {
     if (!user) return;
-    const q =
-      tab === "personal"
-        ? query(collection(db, "documents"), where("ownerUid", "==", user.uid), where("groupId", "==", null), orderBy("createdAt", "desc"))
-        : query(collection(db, "documents"), where("groupId", "==", group?.id ?? "__none__"), orderBy("createdAt", "desc"));
-    const unsub = onSnapshot(
-      q,
-      (snap) => setDocs(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as Document)),
-      () => setDocs([])
-    );
-    return () => unsub();
+    const load = () => {
+      const q =
+        tab === "personal"
+          ? supabase.from("documents").select("*").eq("owner_uid", user.uid).is("group_id", null).order("created_at", { ascending: false })
+          : supabase.from("documents").select("*").eq("group_id", group?.id ?? "__none__").order("created_at", { ascending: false });
+      q.then(({ data }) => setDocs(data ? data.map(rowToDocument) : []));
+    };
+    load();
+
+    const filter = tab === "personal" ? `owner_uid=eq.${user.uid}` : `group_id=eq.${group?.id ?? "__none__"}`;
+    const channel = supabase
+      .channel(`documents-${tab}-${tab === "personal" ? user.uid : (group?.id ?? "none")}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [user, group?.id, tab]);
 
   async function handleAddDriveLink() {
@@ -50,15 +43,14 @@ export default function DokumenPage() {
     }
     const name = window.prompt("Nama dokumen (misal: Tiket pesawat berangkat):", "Dokumen baru");
     if (name === null) return;
-    await addDoc(collection(db, "documents"), {
-      ownerUid: user.uid,
-      groupId: tab === "group" ? group?.id ?? null : null,
+    await supabase.from("documents").insert({
+      owner_uid: user.uid,
+      group_id: tab === "group" ? (group?.id ?? null) : null,
       name: name.trim() || "Dokumen baru",
       category: "lainnya",
-      sourceType: "drive_link",
+      source_type: "drive_link",
       url: link,
-      storagePath: null,
-      createdAt: serverTimestamp(),
+      storage_path: null,
     });
     setDriveLink("");
   }
@@ -76,19 +68,18 @@ export default function DokumenPage() {
     setUploading(true);
     try {
       const safeName = file.name.replace(/[^\w.\- ]+/g, "_");
-      const path = `documents/${user.uid}/${Date.now()}-${safeName}`;
-      const storageRef = ref(storage, path);
-      await uploadBytes(storageRef, file, { contentType: "application/pdf" });
-      const url = await getDownloadURL(storageRef);
-      await addDoc(collection(db, "documents"), {
-        ownerUid: user.uid,
-        groupId: tab === "group" ? group?.id ?? null : null,
+      const path = `${user.uid}/${Date.now()}-${safeName}`;
+      const { error: uploadError } = await supabase.storage.from("documents").upload(path, file, { contentType: "application/pdf" });
+      if (uploadError) throw uploadError;
+      const { data: urlData } = supabase.storage.from("documents").getPublicUrl(path);
+      await supabase.from("documents").insert({
+        owner_uid: user.uid,
+        group_id: tab === "group" ? (group?.id ?? null) : null,
         name: file.name.replace(/\.pdf$/i, ""),
         category: "tiket",
-        sourceType: "upload",
-        url,
-        storagePath: path,
-        createdAt: serverTimestamp(),
+        source_type: "upload",
+        url: urlData.publicUrl,
+        storage_path: path,
       });
     } catch {
       window.alert("Upload gagal. Cek koneksi lalu coba lagi.");
@@ -100,15 +91,15 @@ export default function DokumenPage() {
   async function handleRename(id: string, currentName: string) {
     const next = window.prompt("Nama dokumen baru:", currentName);
     if (!next || !next.trim()) return;
-    await updateDoc(doc(db, "documents", id), { name: next.trim() });
+    await supabase.from("documents").update({ name: next.trim() }).eq("id", id);
   }
 
   async function handleDelete(d: Document) {
     if (!window.confirm(`Hapus "${d.name}"?`)) return;
-    await deleteDoc(doc(db, "documents", d.id));
+    await supabase.from("documents").delete().eq("id", d.id);
     if (d.storagePath) {
       // also free up the PDF in Storage; ignore if it's already gone
-      await deleteObject(ref(storage, d.storagePath)).catch(() => {});
+      await supabase.storage.from("documents").remove([d.storagePath]).catch(() => {});
     }
   }
 

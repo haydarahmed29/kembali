@@ -1,7 +1,9 @@
-// Firestore data model for Kem.Bali.
-// See SCHEMA.md for the collection layout this is based on.
-
-import type { Timestamp } from "firebase/firestore";
+// App-level data model for Kem.Bali. These are the shapes components work with; the Supabase
+// (Postgres) tables underneath use snake_case columns — see supabase/schema.sql for the real
+// schema and lib/mappers.ts for the row <-> object conversion.
+//
+// Timestamps are ISO strings here (what Postgres/Supabase returns), not a special Timestamp
+// type — use `new Date(iso)` wherever the old Firebase Timestamp code called `.toDate()`.
 
 export type Gender = "female" | "male";
 
@@ -14,10 +16,9 @@ export interface UserProfile {
   role: "owner" | "member" | null;
   departureDate: string | null; // ISO date, personal — used when groupId is null
   shareLocation: boolean;
-  lastLocation?: { lat: number; lng: number; accuracy: number; updatedAt: Timestamp } | null; // only while shareLocation is on
-  fcmTokens: string[]; // for push notifications
+  lastLocation?: { lat: number; lng: number; accuracy: number; updatedAt: string } | null; // only while shareLocation is on
   seeded?: { bags?: boolean; outfit?: boolean; supplies?: boolean }; // default packing templates already created
-  createdAt: Timestamp;
+  createdAt: string;
 }
 
 export interface Group {
@@ -28,7 +29,7 @@ export interface Group {
   memberUids: string[];
   startDate: string | null; // ISO date
   endDate: string | null;
-  createdAt: Timestamp;
+  createdAt: string;
 }
 
 export interface Document {
@@ -38,9 +39,9 @@ export interface Document {
   name: string;
   category: "tiket" | "penginapan" | "transport" | "lainnya";
   sourceType: "upload" | "drive_link";
-  url: string; // storage download URL, or the pasted Drive link
+  url: string; // storage signed URL, or the pasted Drive link
   storagePath?: string | null; // Storage object path for uploads, so deleting the doc can delete the file
-  createdAt: Timestamp;
+  createdAt: string;
 }
 
 export interface PackingBag {
@@ -93,7 +94,7 @@ export interface ItineraryItem {
   status: "final" | "voting";
   options: ItineraryOption[]; // used when status === "voting"
   createdBy: string;
-  createdAt: Timestamp;
+  createdAt: string;
 }
 
 export interface AccommodationOption {
@@ -103,11 +104,11 @@ export interface AccommodationOption {
   priceText: string; // "Rp 3,2 jt / 4 malam"
   link: string; // Agoda / Traveloka / Maps link
   source: "agoda" | "traveloka" | "airbnb" | "maps" | "other";
-  imageUrl: string | null; // fetched by the link-unfurl Cloud Function
+  imageUrl: string | null; // fetched by the link-unfurl Edge Function
   votes: string[]; // uids — one vote per member across all options
   chosen?: boolean; // set by the owner when the group settles on this one
   proposedBy: string;
-  createdAt: Timestamp;
+  createdAt: string;
 }
 
 export interface Expense {
@@ -119,7 +120,7 @@ export interface Expense {
   amount: number;
   paidBy: string; // uid
   splitAmong: string[]; // uids
-  createdAt: Timestamp;
+  createdAt: string;
 }
 
 export interface SpotCategory {
@@ -152,7 +153,7 @@ export interface SpotSubmission {
   referenceLinks: { url: string; platform: "tiktok" | "instagram" | "maps" | "other" }[];
   submittedBy: string;
   status: "pending" | "proposed_to_itinerary";
-  createdAt: Timestamp;
+  createdAt: string;
 }
 
 export interface Favorite {
@@ -176,7 +177,7 @@ export interface ActivityLogEntry {
     | "document_uploaded"
     | "expense_added";
   message: string; // human-readable, e.g. "mengubah jam Sunset Tanah Lot dari 15.00 → 16.00"
-  createdAt: Timestamp;
+  createdAt: string;
 }
 
 export interface Announcement {
@@ -184,5 +185,5 @@ export interface Announcement {
   groupId: string;
   authorUid: string;
   message: string;
-  createdAt: Timestamp;
+  createdAt: string;
 }

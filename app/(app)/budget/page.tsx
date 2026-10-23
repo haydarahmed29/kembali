@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, serverTimestamp, where } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
+import { rowToExpense } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { useGroupMembers, nameFor } from "@/lib/useGroupMembers";
@@ -26,15 +26,21 @@ export default function BudgetPage() {
 
   useEffect(() => {
     if (!user) return;
-    const q =
-      tab === "personal"
-        ? query(collection(db, "expenses"), where("paidBy", "==", user.uid), where("groupId", "==", null), orderBy("createdAt", "desc"))
-        : query(collection(db, "expenses"), where("groupId", "==", group?.id ?? "__none__"), orderBy("createdAt", "desc"));
-    return onSnapshot(
-      q,
-      (snap) => setExpenses(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Expense)),
-      () => setExpenses([])
-    );
+    const load = () => {
+      const q =
+        tab === "personal"
+          ? supabase.from("expenses").select("*").eq("paid_by", user.uid).is("group_id", null).order("created_at", { ascending: false })
+          : supabase.from("expenses").select("*").eq("group_id", group?.id ?? "__none__").order("created_at", { ascending: false });
+      q.then(({ data }) => setExpenses(data ? data.map(rowToExpense) : []));
+    };
+    load();
+
+    const filter = tab === "personal" ? `paid_by=eq.${user.uid}` : `group_id=eq.${group?.id ?? "__none__"}`;
+    const channel = supabase
+      .channel(`expenses-${tab}-${tab === "personal" ? user.uid : (group?.id ?? "none")}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "expenses", filter }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [user, group?.id, tab]);
 
   async function addExpense() {
@@ -55,15 +61,14 @@ export default function BudgetPage() {
     const category = (CATEGORIES as string[]).includes(categoryRaw) ? (categoryRaw as Expense["category"]) : "lainnya";
 
     const splitAmong = tab === "group" && group ? group.memberUids : [user.uid];
-    await addDoc(collection(db, "expenses"), {
-      groupId: tab === "group" ? group?.id ?? null : null,
+    await supabase.from("expenses").insert({
+      group_id: tab === "group" ? (group?.id ?? null) : null,
       day,
       title: title.trim(),
       category,
       amount,
-      paidBy: user.uid,
-      splitAmong,
-      createdAt: serverTimestamp(),
+      paid_by: user.uid,
+      split_among: splitAmong,
     });
 
     if (tab === "group" && group) {
@@ -79,7 +84,7 @@ export default function BudgetPage() {
 
   async function removeExpense(exp: Expense) {
     if (!window.confirm(`Hapus "${exp.title}" (Rp ${exp.amount.toLocaleString("id-ID")})?`)) return;
-    await deleteDoc(doc(db, "expenses", exp.id));
+    await supabase.from("expenses").delete().eq("id", exp.id);
     if (exp.groupId && group && user) {
       await logActivity({
         groupId: group.id,

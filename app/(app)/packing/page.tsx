@@ -1,61 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  query,
-  updateDoc,
-  where,
-  writeBatch,
-  type QuerySnapshot,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { useEffect, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { rowToOutfitItem, rowToPackingBag, rowToSuppliesItem } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
-import { DEFAULT_BAGS, DEFAULT_SUPPLIES, defaultOutfitCategories } from "@/lib/defaults";
-import type { OutfitItem, PackingBag, PackingItem, SuppliesItem, UserProfile } from "@/lib/types";
+import { defaultOutfitCategories } from "@/lib/defaults";
+import type { OutfitItem, PackingBag, PackingItem, SuppliesItem } from "@/lib/types";
 
 type Tab = "bags" | "outfit" | "supplies";
-type SeedKind = "bags" | "outfit" | "supplies";
-
-/**
- * Fill in the default template the first time a user opens a tab — and only once.
- * - waits for a server-confirmed empty result (a cached empty snapshot isn't proof)
- * - uses fixed doc IDs, so two tabs/devices racing can't create duplicates
- * - records `seeded.<kind>` on the profile, so deleting every item doesn't bring the template back
- */
-async function seedOnce(
-  snap: QuerySnapshot,
-  uid: string,
-  profile: UserProfile | null,
-  kind: SeedKind,
-  collectionName: string,
-  rows: Record<string, unknown>[],
-  inFlight: RefObject<boolean>
-) {
-  if (!snap.empty || snap.metadata.fromCache || !profile || profile.seeded?.[kind] || inFlight.current) return;
-  inFlight.current = true;
-  try {
-    const batch = writeBatch(db);
-    rows.forEach((row, i) => batch.set(doc(db, collectionName, `${uid}_${kind}_${i}`), row));
-    batch.update(doc(db, "users", uid), { [`seeded.${kind}`]: true });
-    await batch.commit();
-  } finally {
-    inFlight.current = false;
-  }
-}
-
-/** Ref that always holds the latest value, so snapshot callbacks read the current profile without resubscribing. */
-function useLatest<T>(value: T) {
-  const ref = useRef(value);
-  useEffect(() => {
-    ref.current = value;
-  }, [value]);
-  return ref;
-}
 
 export default function PackingPage() {
   const [tab, setTab] = useState<Tab>("bags");
@@ -96,57 +48,69 @@ function BagsTab() {
   const { user, profile } = useAuth();
   const [bags, setBags] = useState<PackingBag[]>([]);
   const seeding = useRef(false);
-  const profileRef = useLatest(profile);
+  const alreadySeeded = !!profile?.seeded?.bags;
 
   useEffect(() => {
     if (!user) return;
-    const q = query(collection(db, "packingBags"), where("ownerUid", "==", user.uid));
-    return onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
-      setBags(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as PackingBag).sort((a, b) => a.id.localeCompare(b.id)));
-      seedOnce(
-        snap,
-        user.uid,
-        profileRef.current,
-        "bags",
-        "packingBags",
-        DEFAULT_BAGS.map((name) => ({ ownerUid: user.uid, groupId: null, name, items: [] })),
-        seeding
-      ).catch(() => {});
-    });
-  }, [user, profileRef]);
+    const load = () =>
+      supabase
+        .from("packing_bags")
+        .select("*")
+        .eq("owner_uid", user.uid)
+        .then(({ data }) => {
+          const rows = data ? data.map(rowToPackingBag).sort((a, b) => a.id.localeCompare(b.id)) : [];
+          setBags(rows);
+          if (rows.length === 0 && !alreadySeeded && !seeding.current) {
+            seeding.current = true;
+            supabase.rpc("seed_packing_bags").then(() => {
+              seeding.current = false;
+            });
+          }
+        });
+    load();
+
+    const channel = supabase
+      .channel(`packing-bags-${user.uid}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "packing_bags", filter: `owner_uid=eq.${user.uid}` }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user, alreadySeeded]);
 
   async function addItem(bag: PackingBag) {
     const name = window.prompt("Nama barang:");
     if (!name?.trim()) return;
     const newItem: PackingItem = { id: crypto.randomUUID(), name: name.trim(), qty: 1, in: false, out: false };
-    await updateDoc(doc(db, "packingBags", bag.id), { items: [...bag.items, newItem] });
+    await supabase.from("packing_bags").update({ items: [...bag.items, newItem] }).eq("id", bag.id);
   }
 
   async function toggleItem(bag: PackingBag, itemId: string, field: "in" | "out") {
     const items = bag.items.map((it) => (it.id === itemId ? { ...it, [field]: !it[field] } : it));
-    await updateDoc(doc(db, "packingBags", bag.id), { items });
+    await supabase.from("packing_bags").update({ items }).eq("id", bag.id);
   }
 
   async function removeItem(bag: PackingBag, itemId: string) {
-    await updateDoc(doc(db, "packingBags", bag.id), { items: bag.items.filter((it) => it.id !== itemId) });
+    await supabase
+      .from("packing_bags")
+      .update({ items: bag.items.filter((it) => it.id !== itemId) })
+      .eq("id", bag.id);
   }
 
   async function renameBag(bag: PackingBag) {
     const name = window.prompt("Nama tas:", bag.name);
     if (!name?.trim()) return;
-    await updateDoc(doc(db, "packingBags", bag.id), { name: name.trim() });
+    await supabase.from("packing_bags").update({ name: name.trim() }).eq("id", bag.id);
   }
 
   async function removeBag(bag: PackingBag) {
     if (!window.confirm(`Hapus "${bag.name}" beserta isinya?`)) return;
-    await deleteDoc(doc(db, "packingBags", bag.id));
+    await supabase.from("packing_bags").delete().eq("id", bag.id);
   }
 
   async function addBag() {
     if (!user) return;
     const name = window.prompt("Nama tas baru:");
     if (!name?.trim()) return;
-    await addDoc(collection(db, "packingBags"), { ownerUid: user.uid, groupId: null, name: name.trim(), items: [] });
+    await supabase.from("packing_bags").insert({ owner_uid: user.uid, group_id: null, name: name.trim(), items: [] });
   }
 
   return (
@@ -206,64 +170,63 @@ function OutfitTab() {
   const { user, profile } = useAuth();
   const [items, setItems] = useState<OutfitItem[]>([]);
   const seeding = useRef(false);
-  const profileRef = useLatest(profile);
   const gender = profile?.gender;
+  const alreadySeeded = !!profile?.seeded?.outfit;
 
   useEffect(() => {
     if (!user || !gender) return;
-    const q = query(collection(db, "outfitItems"), where("ownerUid", "==", user.uid));
-    return onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
-      setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as OutfitItem));
-      seedOnce(
-        snap,
-        user.uid,
-        profileRef.current,
-        "outfit",
-        "outfitItems",
-        defaultOutfitCategories(gender).map((category, i) => ({
-          ownerUid: user.uid,
-          category,
-          name: category,
-          qty: 1,
-          bag: "Koper besar",
-          done: false,
-          order: i,
-        })),
-        seeding
-      ).catch(() => {});
-    });
-  }, [user, gender, profileRef]);
+    const load = () =>
+      supabase
+        .from("outfit_items")
+        .select("*")
+        .eq("owner_uid", user.uid)
+        .then(({ data }) => {
+          const rows = data ? data.map(rowToOutfitItem) : [];
+          setItems(rows);
+          if (rows.length === 0 && !alreadySeeded && !seeding.current) {
+            seeding.current = true;
+            supabase.rpc("seed_outfit_items").then(() => {
+              seeding.current = false;
+            });
+          }
+        });
+    load();
+
+    const channel = supabase
+      .channel(`outfit-items-${user.uid}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "outfit_items", filter: `owner_uid=eq.${user.uid}` }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user, gender, alreadySeeded]);
 
   async function updateQty(item: OutfitItem, delta: number) {
-    await updateDoc(doc(db, "outfitItems", item.id), { qty: Math.max(1, item.qty + delta) });
+    await supabase.from("outfit_items").update({ qty: Math.max(1, item.qty + delta) }).eq("id", item.id);
   }
   async function toggleDone(item: OutfitItem) {
-    await updateDoc(doc(db, "outfitItems", item.id), { done: !item.done });
+    await supabase.from("outfit_items").update({ done: !item.done }).eq("id", item.id);
   }
   async function duplicate(item: OutfitItem) {
-    const { id, ...rest } = item;
-    void id;
-    await addDoc(collection(db, "outfitItems"), { ...rest, done: false });
+    await supabase.from("outfit_items").insert({ owner_uid: item.ownerUid, category: item.category, name: item.name, qty: item.qty, bag: item.bag, done: false });
   }
   async function rename(item: OutfitItem) {
     const next = window.prompt("Nama item:", item.name);
     if (!next?.trim()) return;
-    await updateDoc(doc(db, "outfitItems", item.id), { name: next.trim() });
+    await supabase.from("outfit_items").update({ name: next.trim() }).eq("id", item.id);
   }
   async function remove(item: OutfitItem) {
-    await deleteDoc(doc(db, "outfitItems", item.id));
+    await supabase.from("outfit_items").delete().eq("id", item.id);
   }
   async function addItemToCategory(category: string) {
     if (!user) return;
     const name = window.prompt(`Tambah item di kategori "${category}":`);
     if (!name?.trim()) return;
-    await addDoc(collection(db, "outfitItems"), { ownerUid: user.uid, category, name: name.trim(), qty: 1, bag: "Koper besar", done: false });
+    await supabase.from("outfit_items").insert({ owner_uid: user.uid, category, name: name.trim(), qty: 1, bag: "Koper besar", done: false });
   }
   async function addCategory() {
     if (!user) return;
     const category = window.prompt("Nama kategori baru (misal: Baju renang):");
     if (!category?.trim()) return;
-    await addDoc(collection(db, "outfitItems"), { ownerUid: user.uid, category: category.trim(), name: category.trim(), qty: 1, bag: "Koper besar", done: false });
+    await supabase.from("outfit_items").insert({ owner_uid: user.uid, category: category.trim(), name: category.trim(), qty: 1, bag: "Koper besar", done: false });
   }
 
   // keep the template order (Atasan, Celana panjang, ...) with user-added categories after it
@@ -326,37 +289,45 @@ function SuppliesTab() {
   const { user, profile } = useAuth();
   const [items, setItems] = useState<SuppliesItem[]>([]);
   const seeding = useRef(false);
-  const profileRef = useLatest(profile);
+  const alreadySeeded = !!profile?.seeded?.supplies;
 
   useEffect(() => {
     if (!user) return;
-    // sorted client-side, so this query needs no composite index
-    const q = query(collection(db, "suppliesItems"), where("ownerUid", "==", user.uid));
-    return onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
-      setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as SuppliesItem).sort((a, b) => a.name.localeCompare(b.name, "id")));
-      seedOnce(
-        snap,
-        user.uid,
-        profileRef.current,
-        "supplies",
-        "suppliesItems",
-        DEFAULT_SUPPLIES.map((name) => ({ ownerUid: user.uid, name, checked: false })),
-        seeding
-      ).catch(() => {});
-    });
-  }, [user, profileRef]);
+    const load = () =>
+      supabase
+        .from("supplies_items")
+        .select("*")
+        .eq("owner_uid", user.uid)
+        .then(({ data }) => {
+          const rows = data ? data.map(rowToSuppliesItem).sort((a, b) => a.name.localeCompare(b.name, "id")) : [];
+          setItems(rows);
+          if (rows.length === 0 && !alreadySeeded && !seeding.current) {
+            seeding.current = true;
+            supabase.rpc("seed_supplies_items").then(() => {
+              seeding.current = false;
+            });
+          }
+        });
+    load();
+
+    const channel = supabase
+      .channel(`supplies-items-${user.uid}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "supplies_items", filter: `owner_uid=eq.${user.uid}` }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user, alreadySeeded]);
 
   async function toggle(item: SuppliesItem) {
-    await updateDoc(doc(db, "suppliesItems", item.id), { checked: !item.checked });
+    await supabase.from("supplies_items").update({ checked: !item.checked }).eq("id", item.id);
   }
   async function remove(item: SuppliesItem) {
-    await deleteDoc(doc(db, "suppliesItems", item.id));
+    await supabase.from("supplies_items").delete().eq("id", item.id);
   }
   async function addItem() {
     if (!user) return;
     const name = window.prompt("Tambah keperluan:");
     if (!name?.trim()) return;
-    await addDoc(collection(db, "suppliesItems"), { ownerUid: user.uid, name: name.trim(), checked: false });
+    await supabase.from("supplies_items").insert({ owner_uid: user.uid, name: name.trim(), checked: false });
   }
 
   return (
