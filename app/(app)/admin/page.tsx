@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { geocode } from "@/lib/geocode";
+import SpotCoordsSection from "@/components/admin/SpotCoordsSection";
 import { confirmSheet } from "@/lib/promptSheet";
 import { rowToAccommodationOption, rowToItineraryItem, rowToSpot } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
@@ -183,7 +185,7 @@ export default function AdminPage() {
 
   async function addSpot() {
     if (!user || !spotName.trim()) return;
-    await supabase.from("spots").insert({
+    const { data: created } = await supabase.from("spots").insert({
       area: spotArea,
       category: spotCategory,
       name: spotName.trim(),
@@ -194,7 +196,14 @@ export default function AdminPage() {
       image_url: /^https?:\/\//i.test(spotImage.trim()) ? spotImage.trim() : null,
       maps_url: /^https?:\/\//i.test(spotMaps.trim()) ? spotMaps.trim() : null,
       created_by: user.uid,
-    });
+    }).select("id").single();
+    if (created?.id) {
+      // background: put the new spot on the map (OpenStreetMap lookup, best-effort)
+      const name = spotName.trim();
+      geocode(name, spotArea).then((hit) => {
+        if (hit) supabase.rpc("set_spot_coords", { p_spot_id: created.id, p_lat: hit.lat, p_lng: hit.lng }).then(() => {}); // builder only runs when awaited/then-ed
+      });
+    }
     setSpotName("");
     setSpotMaps("");
     setSpotImage("");
@@ -253,7 +262,7 @@ export default function AdminPage() {
         <section className="bg-white rounded-3xl p-4.5 flex flex-col gap-3">
           <div className="font-bold text-[15px]">Status anggota</div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm border-collapse">
+            <table className="w-full min-w-[620px] text-sm border-collapse">
               <thead>
                 <tr className="text-left text-xs text-kb-muted">
                   <th className="py-2 px-2 font-semibold">Nama</th>
@@ -262,7 +271,6 @@ export default function AdminPage() {
                   <th className="py-2 px-2 font-semibold">Koper (in)</th>
                   <th className="py-2 px-2 font-semibold">Outfit</th>
                   <th className="py-2 px-2 font-semibold">Keperluan</th>
-                  <th className="py-2 px-2 font-semibold">Lokasi</th>
                 </tr>
               </thead>
               <tbody>
@@ -281,20 +289,6 @@ export default function AdminPage() {
                       <td className="py-3 px-2">{s.bags.total ? `${s.bags.in}/${s.bags.total}` : "—"}</td>
                       <td className="py-3 px-2">{s.outfit.total ? `${s.outfit.done}/${s.outfit.total}` : "—"}</td>
                       <td className="py-3 px-2">{s.supplies.total ? `${s.supplies.done}/${s.supplies.total}` : "—"}</td>
-                      <td className="py-3 px-2">
-                        {m.shareLocation && m.lastLocation ? (
-                          <a
-                            href={`https://www.google.com/maps/search/?api=1&query=${m.lastLocation.lat},${m.lastLocation.lng}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="font-bold text-kb-green"
-                          >
-                            Maps ↗
-                          </a>
-                        ) : (
-                          <span className="text-kb-muted">Off</span>
-                        )}
-                      </td>
                     </tr>
                   );
                 })}
@@ -379,6 +373,8 @@ export default function AdminPage() {
             <p className="m-0 text-[11px] text-kb-muted">Target ~30 spot per kategori per area — angka di dropdown kategori nunjukin progresnya.</p>
           </section>
         </div>
+
+        <SpotCoordsSection />
 
         {mySpots.length > 0 && (
           <section className="bg-white rounded-3xl p-4.5 flex flex-col gap-2">

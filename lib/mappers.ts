@@ -87,6 +87,8 @@ export function rowToItineraryItem(r: Row): ItineraryItem {
     location: r.location,
     status: r.status,
     options: r.options ?? [],
+    lat: r.lat ?? null,
+    lng: r.lng ?? null,
     createdBy: r.created_by,
     createdAt: r.created_at,
   };
@@ -136,6 +138,8 @@ export function rowToSpot(r: Row): Spot {
     favoriteCount: r.favorite_count ?? 0,
     imageUrl: r.image_url,
     mapsUrl: r.maps_url,
+    lat: r.lat ?? null,
+    lng: r.lng ?? null,
     createdBy: r.created_by,
   };
 }

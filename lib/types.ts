@@ -93,6 +93,8 @@ export interface ItineraryItem {
   location: string;
   status: "final" | "voting";
   options: ItineraryOption[]; // used when status === "voting"
+  lat: number | null; // copied from the spot, geocoded, or pinned by hand — null = not on the map yet
+  lng: number | null;
   createdBy: string;
   createdAt: string;
 }
@@ -142,6 +144,8 @@ export interface Spot {
   favoriteCount: number;
   imageUrl: string | null;
   mapsUrl: string | null;
+  lat: number | null; // filled by the admin's "Isi koordinat" (OpenStreetMap) or a pin dropped on the map
+  lng: number | null;
   createdBy: string;
 }
 

@@ -59,3 +59,29 @@ a:focus-visible {
   outline: 2px solid var(--color-kb-green);
   outline-offset: 1px;
 }
+
+/* MapLibre controls sized for fingers (44px) and styled like the rest of the app */
+.kb-map .maplibregl-ctrl-group {
+  border-radius: 16px;
+  box-shadow: 0 4px 14px rgba(30, 58, 42, 0.18);
+  overflow: hidden;
+}
+.kb-map .maplibregl-ctrl-group button {
+  width: 44px;
+  height: 44px;
+}
+.kb-map .maplibregl-ctrl-top-right {
+  top: 4px;
+  right: 4px;
+}
+.kb-map .maplibregl-popup-content {
+  border-radius: 16px;
+  padding: 10px 12px;
+  font-family: inherit;
+  box-shadow: 0 6px 18px rgba(30, 58, 42, 0.2);
+}
+.kb-map .maplibregl-popup-close-button {
+  font-size: 18px;
+  width: 28px;
+  height: 28px;
+}

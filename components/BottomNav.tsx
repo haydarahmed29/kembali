@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 // `also` = sub-pages that light up this tab, so you can still tell where you are
 const items = [
   { href: "/home", label: "Home", icon: HomeIcon, also: ["/akomodasi", "/dokumen", "/history", "/profile", "/admin"] },
-  { href: "/itinerary", label: "Itin", icon: ItinIcon, also: [] },
+  { href: "/itinerary", label: "Itin", icon: ItinIcon, also: ["/peta"] },
   { href: "/packing", label: "Packing", icon: PackingIcon, also: [] },
   { href: "/budget", label: "Budget", icon: BudgetIcon, also: [] },
   { href: "/explore", label: "Explore", icon: ExploreIcon, also: ["/kiblat", "/tips"] },

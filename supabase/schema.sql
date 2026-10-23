@@ -109,6 +109,8 @@ create table if not exists itinerary_items (
   location text not null default '',
   status text not null check (status in ('final', 'voting')),
   options jsonb not null default '[]'::jsonb, -- [{id, label, votes: [uid], proposedBy}]
+  lat double precision, -- null = not on the map yet
+  lng double precision,
   created_by uuid not null references auth.users(id),
   created_at timestamptz not null default now()
 );
@@ -157,6 +159,8 @@ create table if not exists spots (
   favorite_count integer not null default 0,
   image_url text,
   maps_url text,
+  lat double precision, -- null until geocoded / pinned on the map
+  lng double precision,
   created_by uuid not null references auth.users(id)
 );
 create index if not exists spots_area_category_idx on spots(area, category);
@@ -703,3 +707,55 @@ create policy documents_storage_insert on storage.objects for insert
   with check (bucket_id = 'documents' and auth.uid()::text = (storage.foldername(name))[1]);
 create policy documents_storage_delete on storage.objects for delete
   using (bucket_id = 'documents' and auth.uid()::text = (storage.foldername(name))[1]);
+
+-- ---------------------------------------------------------------------------
+-- Map coordinates + live location (also shipped as supabase/map_live.sql)
+-- Isi/benerin koordinat spot. Spot hasil seed dibuat atas nama akun pertama, jadi
+--    update biasa bisa ditolak RLS; RPC ini mengizinkan pembuat spot ATAU owner group mana pun.
+create or replace function set_spot_coords(p_spot_id uuid, p_lat double precision, p_lng double precision)
+returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then
+    raise exception 'not signed in';
+  end if;
+  if not exists (select 1 from spots where id = p_spot_id and created_by = auth.uid())
+     and not exists (select 1 from groups where owner_uid = auth.uid()) then
+    raise exception 'not allowed';
+  end if;
+  if p_lat is not null and (p_lat < -90 or p_lat > 90 or p_lng < -180 or p_lng > 180) then
+    raise exception 'invalid coordinates';
+  end if;
+  update spots set lat = p_lat, lng = p_lng where id = p_spot_id;
+end;
+$$;
+grant execute on function set_spot_coords(uuid, double precision, double precision) to authenticated;
+
+-- 3) Live location: private Realtime channel "trip-live:<group_id>" (Presence).
+--    Cuma anggota group itu yang boleh join, kirim, dan nerima posisi.
+create or replace function can_use_trip_live(p_topic text)
+returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare
+  v_group uuid;
+begin
+  if p_topic is null or p_topic not like 'trip-live:%' then
+    return false;
+  end if;
+  begin
+    v_group := substr(p_topic, length('trip-live:') + 1)::uuid;
+  exception when others then
+    return false;
+  end;
+  return is_group_member(v_group);
+end;
+$$;
+grant execute on function can_use_trip_live(text) to authenticated;
+
+drop policy if exists trip_live_read on realtime.messages;
+create policy trip_live_read on realtime.messages for select to authenticated
+  using (realtime.messages.extension in ('presence', 'broadcast') and can_use_trip_live(realtime.topic()));
+
+drop policy if exists trip_live_write on realtime.messages;
+create policy trip_live_write on realtime.messages for insert to authenticated
+  with check (realtime.messages.extension in ('presence', 'broadcast') and can_use_trip_live(realtime.topic()));

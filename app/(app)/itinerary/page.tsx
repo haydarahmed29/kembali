@@ -11,6 +11,7 @@ import { logActivity } from "@/lib/activityLog";
 import { normalizeTime } from "@/lib/time";
 import { useChosenStay } from "@/lib/useChosenStay";
 import { buildMapsHref } from "@/lib/maps";
+import { fillItineraryCoords } from "@/lib/geocode";
 import { confirmSheet, promptField, promptFields } from "@/lib/promptSheet";
 import type { ItineraryItem } from "@/lib/types";
 
@@ -61,7 +62,7 @@ export default function ItineraryPage() {
 
     // the proposer automatically votes for their own idea
     const option = { id: crypto.randomUUID(), label: title, votes: [user.uid], proposedBy: user.uid };
-    await supabase.from("itinerary_items").insert({
+    const { data: created } = await supabase.from("itinerary_items").insert({
       group_id: scopeId,
       day,
       time,
@@ -70,7 +71,8 @@ export default function ItineraryPage() {
       status: group ? "voting" : "final",
       options: group ? [option] : [],
       created_by: user.uid,
-    });
+    }).select("id").single();
+    if (created?.id) fillItineraryCoords(created.id, title); // background: put it on the map if OpenStreetMap knows it
 
     if (group) {
       await logActivity({
@@ -119,6 +121,7 @@ export default function ItineraryPage() {
     if (!winner) return;
     if (!(await confirmSheet(`Tutup voting & pilih "${winner.label}"? Yang lain nggak bisa vote lagi buat slot ini.`, { title: "Tutup voting?", confirmLabel: "Tutup voting" }))) return;
     await supabase.rpc("finalize_itinerary", { p_item_id: item.id, p_option_id: optionId });
+    if (item.lat == null || winner.label !== item.title) fillItineraryCoords(item.id, winner.label); // locate the winner
     if (group) {
       await logActivity({
         groupId: group.id,
@@ -183,6 +186,9 @@ export default function ItineraryPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Itinerary</h1>
         <div className="flex gap-2">
+          <Link href="/peta" aria-label="Peta" className="h-11 px-3.5 rounded-full bg-white flex items-center gap-1.5 font-bold text-[13px]">
+            🗺️ Peta
+          </Link>
           {group && (
             <Link href="/history" aria-label="Riwayat" className="w-11 h-11 rounded-full bg-white flex items-center justify-center">
               🕘

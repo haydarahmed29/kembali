@@ -11,6 +11,7 @@ import { buildGoogleImagesHref, buildInstagramHref, buildMapsHref, buildPinteres
 import { AREAS, CATEGORIES } from "@/lib/exploreConfig";
 import { logActivity } from "@/lib/activityLog";
 import { promptDayAndTime } from "@/lib/time";
+import { fillItineraryCoords } from "@/lib/geocode";
 import type { Spot, SpotSubmission } from "@/lib/types";
 
 function detectPlatform(url: string): "tiktok" | "instagram" | "maps" | "other" {
@@ -157,11 +158,12 @@ export default function ExplorePage() {
     }
   }
 
-  async function addToItinerary(name: string): Promise<boolean> {
+  async function addToItinerary(name: string, coords?: { lat: number | null; lng: number | null }): Promise<boolean> {
     if (!user) return false;
     const when = await promptDayAndTime();
     if (!when) return false;
-    await supabase.from("itinerary_items").insert({
+    const hasCoords = coords?.lat != null && coords?.lng != null;
+    const { data: created } = await supabase.from("itinerary_items").insert({
       group_id: group?.id ?? null,
       day: when.day,
       time: when.time,
@@ -170,8 +172,11 @@ export default function ExplorePage() {
       // in a group the slot still goes to a vote (with your vote already on it); solo it's final straight away
       status: group ? "voting" : "final",
       options: group ? [{ id: crypto.randomUUID(), label: name, votes: [user.uid], proposedBy: user.uid }] : [],
+      lat: hasCoords ? coords!.lat : null, // spot coordinates come along, so it shows on the map right away
+      lng: hasCoords ? coords!.lng : null,
       created_by: user.uid,
-    });
+    }).select("id").single();
+    if (created?.id && !hasCoords) fillItineraryCoords(created.id, name); // background lookup
     if (group) {
       await logActivity({
         groupId: group.id,
@@ -388,7 +393,7 @@ export default function ExplorePage() {
                   Foto
                 </RefLink>
               </div>
-              <button type="button" onClick={() => addToItinerary(spot.name)} className="h-8 px-3 rounded-xl bg-kb-lime text-kb-ink font-bold text-[11px] shrink-0">
+              <button type="button" onClick={() => addToItinerary(spot.name, spot)} className="h-8 px-3 rounded-xl bg-kb-lime text-kb-ink font-bold text-[11px] shrink-0">
                 + Itin
               </button>
             </div>
