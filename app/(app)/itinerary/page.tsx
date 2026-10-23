@@ -160,6 +160,11 @@ export default function ItineraryPage() {
         </div>
       </div>
 
+      <Link href="/explore" className="bg-kb-green rounded-[18px] px-3.5 py-3 flex items-center gap-2.5 text-white">
+        <div className="flex-1 text-[13px] font-bold">Bingung mau isi apa? Cari tempat di Explore Bali</div>
+        <span className="text-kb-lime">→</span>
+      </Link>
+
       {Object.keys(byDay).length === 0 && <p className="text-sm text-kb-muted">Belum ada rencana. Tambah yang pertama yuk — atau ambil dari tab Explore.</p>}
 
       {Object.entries(byDay)

@@ -31,6 +31,9 @@ export default function ExplorePage() {
   const [spots, setSpots] = useState<Spot[]>([]);
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
   const [submissions, setSubmissions] = useState<SpotSubmission[]>([]);
+  const [search, setSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<Spot[] | null>(null);
+  const [searching, setSearching] = useState(false);
 
   const [newName, setNewName] = useState("");
   const [newLink, setNewLink] = useState("");
@@ -56,6 +59,29 @@ export default function ExplorePage() {
     const t = setTimeout(() => setToast(null), 2500);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // search looks across every area/category, not just the one selected above
+  useEffect(() => {
+    const q = search.trim();
+    if (!q) {
+      setSearchResults(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(() => {
+      supabase
+        .from("spots")
+        .select("*")
+        .ilike("name", `%${q}%`)
+        .order("name")
+        .then(({ data }) => {
+          setSearchResults(data ? data.map(rowToSpot) : []);
+          setSearching(false);
+        });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [search]);
 
   useEffect(() => {
     if (!user) return;
@@ -168,8 +194,10 @@ export default function ExplorePage() {
     if (added) await supabase.from("spot_submissions").update({ status: "proposed_to_itinerary" }).eq("id", sub.id);
   }
 
+  const isSearching = search.trim().length > 0;
+
   // favorites first, then most-favorited, then A–Z
-  const visibleSpots = spots
+  const visibleSpots = (isSearching ? (searchResults ?? []) : spots)
     .filter((s) => !onlyFavorites || favoriteIds.has(s.id))
     .sort(
       (a, b) =>
@@ -207,55 +235,91 @@ export default function ExplorePage() {
         <span className="text-kb-green">→</span>
       </Link>
 
-      <div className="flex gap-2 overflow-x-auto">
-        {AREAS.map((a) => (
-          <button
-            key={a}
-            type="button"
-            onClick={() => setArea(a)}
-            className={`h-10 px-4 rounded-full font-bold text-[13px] shrink-0 ${a === area ? "bg-kb-lime" : "bg-white text-[#3F4F44]"}`}
-          >
-            {a}
+      <div className="bg-white rounded-2xl px-3.5 h-12 flex items-center gap-2">
+        <span className="text-kb-muted text-sm" aria-hidden>🔍</span>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Cari nama tempat di semua area…"
+          className="flex-1 min-w-0 h-full bg-transparent text-sm outline-none"
+        />
+        {search && (
+          <button type="button" onClick={() => setSearch("")} aria-label="Hapus pencarian" className="text-kb-muted text-sm px-1">
+            ✕
           </button>
-        ))}
+        )}
       </div>
 
-      <div className="flex gap-2 overflow-x-auto">
-        <button
-          type="button"
-          onClick={() => setOnlyFavorites((v) => !v)}
-          aria-pressed={onlyFavorites}
-          className={`h-[34px] px-3.5 rounded-full text-xs font-bold shrink-0 ${onlyFavorites ? "bg-[#FDEEDC] text-[#E8720C]" : "bg-white text-[#3F4F44]"}`}
-        >
-          ♥ Favoritku
-        </button>
-        <button
-          type="button"
-          onClick={() => setCategory(null)}
-          className={`h-[34px] px-3.5 rounded-full text-xs font-bold shrink-0 ${category === null ? "border-[1.5px] border-kb-green bg-white" : "bg-white text-[#3F4F44]"}`}
-        >
-          Semua kategori
-        </button>
-        {CATEGORIES.map((c) => (
+      {!isSearching && (
+        <>
+          <div className="flex gap-2 overflow-x-auto">
+            {AREAS.map((a) => (
+              <button
+                key={a}
+                type="button"
+                onClick={() => setArea(a)}
+                className={`h-10 px-4 rounded-full font-bold text-[13px] shrink-0 ${a === area ? "bg-kb-lime" : "bg-white text-[#3F4F44]"}`}
+              >
+                {a}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex gap-2 overflow-x-auto">
+            <button
+              type="button"
+              onClick={() => setOnlyFavorites((v) => !v)}
+              aria-pressed={onlyFavorites}
+              className={`h-[34px] px-3.5 rounded-full text-xs font-bold shrink-0 ${onlyFavorites ? "bg-[#FDEEDC] text-[#E8720C]" : "bg-white text-[#3F4F44]"}`}
+            >
+              ♥ Favoritku
+            </button>
+            <button
+              type="button"
+              onClick={() => setCategory(null)}
+              className={`h-[34px] px-3.5 rounded-full text-xs font-bold shrink-0 ${category === null ? "border-[1.5px] border-kb-green bg-white" : "bg-white text-[#3F4F44]"}`}
+            >
+              Semua kategori
+            </button>
+            {CATEGORIES.map((c) => (
+              <button
+                key={c.slug}
+                type="button"
+                onClick={() => setCategory(c.slug)}
+                className={`h-[34px] px-3.5 rounded-full text-xs font-semibold shrink-0 ${category === c.slug ? "border-[1.5px] border-kb-green bg-white" : "bg-white text-[#3F4F44]"}`}
+              >
+                {c.emoji} {c.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {isSearching && (
+        <div className="flex gap-2 overflow-x-auto">
           <button
-            key={c.slug}
             type="button"
-            onClick={() => setCategory(c.slug)}
-            className={`h-[34px] px-3.5 rounded-full text-xs font-semibold shrink-0 ${category === c.slug ? "border-[1.5px] border-kb-green bg-white" : "bg-white text-[#3F4F44]"}`}
+            onClick={() => setOnlyFavorites((v) => !v)}
+            aria-pressed={onlyFavorites}
+            className={`h-[34px] px-3.5 rounded-full text-xs font-bold shrink-0 ${onlyFavorites ? "bg-[#FDEEDC] text-[#E8720C]" : "bg-white text-[#3F4F44]"}`}
           >
-            {c.emoji} {c.label}
+            ♥ Favoritku
           </button>
-        ))}
-      </div>
+        </div>
+      )}
 
       <div className="flex items-baseline justify-between">
-        <div className="text-[16px] font-bold">Spot di {area}</div>
-        <div className="text-xs text-kb-muted">{visibleSpots.length} tempat · favorit duluan</div>
+        <div className="text-[16px] font-bold">{isSearching ? `Hasil untuk "${search.trim()}"` : `Spot di ${area}`}</div>
+        <div className="text-xs text-kb-muted">{searching ? "Nyari..." : `${visibleSpots.length} tempat · favorit duluan`}</div>
       </div>
 
-      {visibleSpots.length === 0 && (
+      {!searching && visibleSpots.length === 0 && (
         <p className="text-sm text-kb-muted">
-          {onlyFavorites ? "Belum ada favorit di sini — ketuk ♥ di spot yang kamu suka." : "Belum ada data spot di sini — admin bisa tambah lewat dashboard."}
+          {isSearching
+            ? "Gak ketemu tempat dengan nama itu."
+            : onlyFavorites
+              ? "Belum ada favorit di sini — ketuk ♥ di spot yang kamu suka."
+              : "Belum ada data spot di sini — admin bisa tambah lewat dashboard."}
         </p>
       )}
 
@@ -272,7 +336,9 @@ export default function ExplorePage() {
           <div className="flex-1 min-w-0 flex flex-col gap-1">
             <div className="text-[15px] font-bold">{spot.name}</div>
             <div className="text-xs text-kb-muted">
-              {[CATEGORIES.find((c) => c.slug === spot.category)?.label, spot.durationText, spot.ticketPrice].filter(Boolean).join(" · ") || "—"}
+              {[isSearching ? spot.area : null, CATEGORIES.find((c) => c.slug === spot.category)?.label, spot.durationText, spot.ticketPrice]
+                .filter(Boolean)
+                .join(" · ") || "—"}
             </div>
             <div className="flex flex-wrap gap-x-3 gap-y-0.5">
               <a

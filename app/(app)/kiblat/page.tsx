@@ -117,9 +117,12 @@ export default function KiblatPage() {
   }
 
   const bearing = coords ? qiblaBearing(coords.lat, coords.lng) : null;
-  // with a live heading the needle points at the Kaaba relative to the phone; without one it shows bearing from north
-  const needleRotation = bearing != null ? bearing - (heading ?? 0) : 0;
-  const aligned = heading != null && bearing != null && Math.abs(((needleRotation % 360) + 540) % 360 - 180) < 5;
+  // the dial (N/S/E/W ring) rotates to the phone's true heading; a mark on the dial sits at the
+  // Kaaba's bearing from north, and a fixed arrow always points straight up — when the dial's
+  // mark lines up with that fixed arrow, the phone is facing the Kaaba.
+  const dialRotation = heading != null ? -heading : 0;
+  const qiblaOffset = bearing != null ? bearing - (heading ?? 0) : 0;
+  const aligned = heading != null && bearing != null && Math.abs(((qiblaOffset % 360) + 540) % 360 - 180) < 5;
 
   return (
     <div className="p-4 flex flex-col gap-3.5">
@@ -134,20 +137,28 @@ export default function KiblatPage() {
         <div className="text-xs font-semibold text-kb-lime">Kompas Kiblat</div>
         <div className={`w-[220px] h-[220px] rounded-full relative flex items-center justify-center transition-colors ${aligned ? "bg-[#3C6250]" : "bg-kb-green-light"}`}>
           <div className="absolute inset-2.5 rounded-full border border-[#3C6250]" />
-          {heading == null && (
-            <>
-              <span className="absolute top-3.5 text-xs font-extrabold text-[#C9D6C4]">U</span>
-              <span className="absolute bottom-3.5 text-xs font-extrabold text-[#C9D6C4]">S</span>
-              <span className="absolute left-3.5 text-xs font-extrabold text-[#C9D6C4]">B</span>
-              <span className="absolute right-3.5 text-xs font-extrabold text-[#C9D6C4]">T</span>
-            </>
+
+          {/* rotating dial: true U/S/B/T ring, plus a mark at the Kaaba's bearing from north */}
+          <div className="absolute inset-0 transition-transform duration-200" style={{ transform: `rotate(${dialRotation}deg)` }}>
+            <span className="absolute left-1/2 top-3.5 -translate-x-1/2 text-xs font-extrabold text-[#C9D6C4]">U</span>
+            <span className="absolute left-1/2 bottom-3.5 -translate-x-1/2 text-xs font-extrabold text-[#C9D6C4]">S</span>
+            <span className="absolute top-1/2 left-3.5 -translate-y-1/2 text-xs font-extrabold text-[#C9D6C4]">B</span>
+            <span className="absolute top-1/2 right-3.5 -translate-y-1/2 text-xs font-extrabold text-[#C9D6C4]">T</span>
+            {bearing != null && (
+              <div
+                className="absolute left-1/2 bottom-1/2 w-1.5 h-[90px] bg-kb-lime rounded-full origin-bottom"
+                style={{ transform: `translateX(-50%) rotate(${bearing}deg)` }}
+              />
+            )}
+          </div>
+
+          {/* fixed reference arrow — always points up; lines up with the dial's mark when facing the Kaaba */}
+          {heading != null && (
+            <div className="absolute left-1/2 top-2 -translate-x-1/2 text-kb-lime text-sm z-20" aria-hidden>
+              ▲
+            </div>
           )}
-          {bearing != null && (
-            <div
-              className="absolute w-1.5 h-[90px] bg-kb-lime rounded-full origin-bottom transition-transform duration-200"
-              style={{ transform: `rotate(${needleRotation}deg)`, bottom: "50%" }}
-            />
-          )}
+
           <div className="w-[46px] h-[46px] rounded-full bg-kb-lime text-kb-green flex items-center justify-center text-lg z-10">🕋</div>
         </div>
         <div className="text-[22px] font-extrabold">{bearing != null ? `${Math.round(bearing)}°` : "..."} dari Utara</div>
