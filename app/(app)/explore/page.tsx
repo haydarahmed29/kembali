@@ -106,7 +106,7 @@ export default function ExplorePage() {
 
   async function addToItinerary(name: string): Promise<boolean> {
     if (!user) return false;
-    const when = promptDayAndTime();
+    const when = await promptDayAndTime();
     if (!when) return false;
     await supabase.from("itinerary_items").insert({
       group_id: group?.id ?? null,

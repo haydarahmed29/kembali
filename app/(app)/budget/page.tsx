@@ -10,6 +10,7 @@ import { settleUp } from "@/lib/settleUp";
 import { logActivity } from "@/lib/activityLog";
 import { isOwner } from "@/lib/group";
 import { parseRupiah } from "@/lib/time";
+import { promptFields } from "@/lib/promptSheet";
 import type { Expense } from "@/lib/types";
 
 const CATEGORIES: Expense["category"][] = ["transport", "makan", "tiket", "penginapan", "belanja", "lainnya"];
@@ -45,19 +46,21 @@ export default function BudgetPage() {
 
   async function addExpense() {
     if (!user) return;
-    const title = window.prompt("Untuk apa?");
-    if (!title?.trim()) return;
-    const amountRaw = window.prompt("Berapa rupiah? (boleh pakai titik, misal 150.000)", "");
-    if (amountRaw === null) return;
-    const amount = parseRupiah(amountRaw);
-    if (!amount) {
-      window.alert("Nominalnya belum keisi.");
-      return;
-    }
-    const dayRaw = window.prompt("Hari ke-?", "1");
-    if (dayRaw === null) return;
-    const day = Math.max(1, Math.round(Number(dayRaw)) || 1);
-    const categoryRaw = (window.prompt(`Kategori (${CATEGORIES.join(" / ")}):`, "lainnya") ?? "lainnya").trim().toLowerCase();
+    const result = await promptFields(
+      [
+        { key: "title", label: "Untuk apa?", placeholder: "misal: Makan siang" },
+        { key: "amount", label: "Berapa rupiah?", placeholder: "boleh pakai titik, misal 150.000" },
+        { key: "day", label: "Hari ke-", defaultValue: "1", type: "number" },
+        { key: "category", label: `Kategori (${CATEGORIES.join(" / ")})`, defaultValue: "lainnya" },
+      ],
+      { title: "Catat pengeluaran", confirmLabel: "Catat" }
+    );
+    if (!result) return;
+    const title = result.title;
+    const amount = parseRupiah(result.amount);
+    if (!amount) return;
+    const day = Math.max(1, Math.round(Number(result.day)) || 1);
+    const categoryRaw = result.category.trim().toLowerCase();
     const category = (CATEGORIES as string[]).includes(categoryRaw) ? (categoryRaw as Expense["category"]) : "lainnya";
 
     const splitAmong = tab === "group" && group ? group.memberUids : [user.uid];

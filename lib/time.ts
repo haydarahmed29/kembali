@@ -9,18 +9,19 @@ export function normalizeTime(input: string | null | undefined): string | null {
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
-/** Ask for day + time with prompts; returns null if the user cancels or types nonsense. */
-export function promptDayAndTime(defaultTime = "10:00"): { day: number; time: string } | null {
-  const dayRaw = window.prompt("Hari ke-berapa?", "1");
-  if (dayRaw === null) return null;
-  const day = Math.max(1, Math.min(30, Math.round(Number(dayRaw)) || 1));
-  const timeRaw = window.prompt("Jam berapa? (misal 09:30)", defaultTime);
-  if (timeRaw === null) return null;
-  const time = normalizeTime(timeRaw);
-  if (!time) {
-    window.alert("Format jam-nya kurang pas. Contoh: 09:30");
-    return null;
-  }
+/** Ask for day + time in one sheet; returns null if the user cancels. Bad time format just falls back to defaultTime. */
+export async function promptDayAndTime(defaultTime = "10:00"): Promise<{ day: number; time: string } | null> {
+  const { promptFields } = await import("./promptSheet");
+  const result = await promptFields(
+    [
+      { key: "day", label: "Hari ke-", defaultValue: "1", type: "number" },
+      { key: "time", label: "Jam", defaultValue: defaultTime, placeholder: "misal 09:30" },
+    ],
+    { title: "Masukin ke itinerary hari & jam berapa?", confirmLabel: "Lanjut" }
+  );
+  if (!result) return null;
+  const day = Math.max(1, Math.min(30, Math.round(Number(result.day)) || 1));
+  const time = normalizeTime(result.time) ?? defaultTime;
   return { day, time };
 }
 

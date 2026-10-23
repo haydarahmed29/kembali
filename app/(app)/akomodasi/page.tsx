@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { isOwner } from "@/lib/group";
 import { logActivity } from "@/lib/activityLog";
+import { promptFields } from "@/lib/promptSheet";
 import type { AccommodationOption } from "@/lib/types";
 
 function detectSource(url: string): AccommodationOption["source"] {
@@ -64,13 +65,20 @@ export default function AkomodasiPage() {
       setError("Tempel link lengkap yang diawali https:// ya.");
       return;
     }
-    const title = window.prompt("Nama villa/penginapan:");
-    if (title === null) return; // cancelled
-    const priceText = window.prompt("Harga (misal: Rp 3,2 jt / 4 malam):", "") ?? "";
-    const nightsRaw = window.prompt("Nginep berapa malam di sini?", "") ?? "";
-    const nights = nightsRaw.trim() ? Number.parseInt(nightsRaw.trim(), 10) : null;
-    const address = window.prompt("Alamat/area (opsional — dipakai buat ngitung rute dari sini ke tempat wisata):", "") ?? "";
-    const name = title.trim() || "Villa";
+    const result = await promptFields(
+      [
+        { key: "title", label: "Nama villa/penginapan", placeholder: "misal: Villa Bukit Uluwatu" },
+        { key: "priceText", label: "Harga", placeholder: "misal: Rp 3,2 jt / 4 malam", optional: true },
+        { key: "nights", label: "Nginep berapa malam di sini?", type: "number", optional: true },
+        { key: "address", label: "Alamat/area (opsional)", placeholder: "dipakai buat ngitung rute ke tempat wisata", optional: true },
+      ],
+      { title: "Tambah opsi villa", confirmLabel: "Tambah" }
+    );
+    if (!result) return; // cancelled
+    const priceText = result.priceText ?? "";
+    const nights = result.nights?.trim() ? Number.parseInt(result.nights.trim(), 10) : null;
+    const address = result.address ?? "";
+    const name = result.title.trim() || "Villa";
     const { data } = await supabase
       .from("accommodation_options")
       .insert({

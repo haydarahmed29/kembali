@@ -8,7 +8,8 @@ import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { isOwner } from "@/lib/group";
 import { logActivity } from "@/lib/activityLog";
-import { promptDayAndTime } from "@/lib/time";
+import { normalizeTime } from "@/lib/time";
+import { promptField, promptFields } from "@/lib/promptSheet";
 import type { ItineraryItem } from "@/lib/types";
 
 export default function ItineraryPage() {
@@ -40,18 +41,26 @@ export default function ItineraryPage() {
 
   async function addItem() {
     if (!user) return;
-    const title = window.prompt(group ? "Usulan tempat/kegiatan:" : "Tempat/kegiatan:");
-    if (!title?.trim()) return;
-    const when = promptDayAndTime();
-    if (!when) return;
+    const result = await promptFields(
+      [
+        { key: "title", label: group ? "Usulan tempat/kegiatan" : "Tempat/kegiatan", placeholder: "misal: Makan malam di Jimbaran" },
+        { key: "day", label: "Hari ke-", defaultValue: "1", type: "number" },
+        { key: "time", label: "Jam", defaultValue: "10:00", placeholder: "misal 09:30" },
+      ],
+      { title: group ? "Usulkan tempat/kegiatan" : "Tambah ke itinerary", confirmLabel: "Tambah" }
+    );
+    if (!result) return;
+    const title = result.title.trim();
+    const day = Math.max(1, Math.min(30, Math.round(Number(result.day)) || 1));
+    const time = normalizeTime(result.time) ?? "10:00";
 
     // the proposer automatically votes for their own idea
-    const option = { id: crypto.randomUUID(), label: title.trim(), votes: [user.uid], proposedBy: user.uid };
+    const option = { id: crypto.randomUUID(), label: title, votes: [user.uid], proposedBy: user.uid };
     await supabase.from("itinerary_items").insert({
       group_id: scopeId,
-      day: when.day,
-      time: when.time,
-      title: title.trim(),
+      day,
+      time,
+      title,
       location: "",
       status: group ? "voting" : "final",
       options: group ? [option] : [],
@@ -64,14 +73,14 @@ export default function ItineraryPage() {
         actorUid: user.uid,
         actorName: myName,
         action: "itinerary_update",
-        message: `menambahkan usulan "${title.trim()}" jam ${when.time} di Hari ${when.day}`,
+        message: `menambahkan usulan "${title}" jam ${time} di Hari ${day}`,
       });
     }
   }
 
   async function addOption(item: ItineraryItem) {
     if (!user) return;
-    const label = window.prompt(`Opsi lain buat Hari ${item.day} jam ${item.time}:`);
+    const label = await promptField(`Opsi lain buat Hari ${item.day} jam ${item.time}`);
     if (!label?.trim()) return;
     await supabase.rpc("add_itinerary_option", { p_item_id: item.id, p_label: label.trim() });
     if (group) {

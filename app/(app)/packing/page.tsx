@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { rowToOutfitItem, rowToPackingBag, rowToSuppliesItem } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { defaultOutfitCategories } from "@/lib/defaults";
+import { promptField } from "@/lib/promptSheet";
 import type { OutfitItem, PackingBag, PackingItem, SuppliesItem } from "@/lib/types";
 
 type Tab = "bags" | "outfit" | "supplies";
@@ -77,7 +78,7 @@ function BagsTab() {
   }, [user, alreadySeeded]);
 
   async function addItem(bag: PackingBag) {
-    const name = window.prompt("Nama barang:");
+    const name = await promptField("Nama barang");
     if (!name?.trim()) return;
     const newItem: PackingItem = { id: crypto.randomUUID(), name: name.trim(), qty: 1, in: false, out: false };
     await supabase.from("packing_bags").update({ items: [...bag.items, newItem] }).eq("id", bag.id);
@@ -96,7 +97,7 @@ function BagsTab() {
   }
 
   async function renameBag(bag: PackingBag) {
-    const name = window.prompt("Nama tas:", bag.name);
+    const name = await promptField("Nama tas", bag.name);
     if (!name?.trim()) return;
     await supabase.from("packing_bags").update({ name: name.trim() }).eq("id", bag.id);
   }
@@ -108,7 +109,7 @@ function BagsTab() {
 
   async function addBag() {
     if (!user) return;
-    const name = window.prompt("Nama tas baru:");
+    const name = await promptField("Nama tas baru");
     if (!name?.trim()) return;
     await supabase.from("packing_bags").insert({ owner_uid: user.uid, group_id: null, name: name.trim(), items: [] });
   }
@@ -209,7 +210,7 @@ function OutfitTab() {
     await supabase.from("outfit_items").insert({ owner_uid: item.ownerUid, category: item.category, name: item.name, qty: item.qty, bag: item.bag, done: false });
   }
   async function rename(item: OutfitItem) {
-    const next = window.prompt("Nama item:", item.name);
+    const next = await promptField("Nama item", item.name);
     if (!next?.trim()) return;
     await supabase.from("outfit_items").update({ name: next.trim() }).eq("id", item.id);
   }
@@ -218,13 +219,13 @@ function OutfitTab() {
   }
   async function addItemToCategory(category: string) {
     if (!user) return;
-    const name = window.prompt(`Tambah item di kategori "${category}":`);
+    const name = await promptField(`Tambah item di kategori "${category}"`);
     if (!name?.trim()) return;
     await supabase.from("outfit_items").insert({ owner_uid: user.uid, category, name: name.trim(), qty: 1, bag: "Koper besar", done: false });
   }
   async function addCategory() {
     if (!user) return;
-    const category = window.prompt("Nama kategori baru (misal: Baju renang):");
+    const category = await promptField("Nama kategori baru (misal: Baju renang)");
     if (!category?.trim()) return;
     await supabase.from("outfit_items").insert({ owner_uid: user.uid, category: category.trim(), name: category.trim(), qty: 1, bag: "Koper besar", done: false });
   }
@@ -325,7 +326,7 @@ function SuppliesTab() {
   }
   async function addItem() {
     if (!user) return;
-    const name = window.prompt("Tambah keperluan:");
+    const name = await promptField("Tambah keperluan");
     if (!name?.trim()) return;
     await supabase.from("supplies_items").insert({ owner_uid: user.uid, name: name.trim(), checked: false });
   }

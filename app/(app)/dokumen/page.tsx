@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { rowToDocument } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
+import { promptField } from "@/lib/promptSheet";
 import type { Document } from "@/lib/types";
 
 export default function DokumenPage() {
@@ -41,7 +42,7 @@ export default function DokumenPage() {
       window.alert("Link-nya harus diawali https:// ya.");
       return;
     }
-    const name = window.prompt("Nama dokumen (misal: Tiket pesawat berangkat):", "Dokumen baru");
+    const name = await promptField("Nama dokumen", "Dokumen baru", { placeholder: "misal: Tiket pesawat berangkat" });
     if (name === null) return;
     await supabase.from("documents").insert({
       owner_uid: user.uid,
@@ -89,7 +90,7 @@ export default function DokumenPage() {
   }
 
   async function handleRename(id: string, currentName: string) {
-    const next = window.prompt("Nama dokumen baru:", currentName);
+    const next = await promptField("Nama dokumen baru", currentName);
     if (!next || !next.trim()) return;
     await supabase.from("documents").update({ name: next.trim() }).eq("id", id);
   }

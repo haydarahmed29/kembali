@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/lib/AuthProvider";
+import PromptSheet from "@/components/PromptSheet";
 
 export const metadata: Metadata = {
   title: "Kem.Bali",
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-full bg-kb-bg text-kb-ink">
         <AuthProvider>
           <div className="app-shell">{children}</div>
+          <PromptSheet />
         </AuthProvider>
       </body>
     </html>
