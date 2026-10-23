@@ -12,3 +12,14 @@ export function buildMapsHref(destinationQuery: string, originAddress?: string |
   }
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(destinationQuery)}`;
 }
+
+// Instagram/Pinterest have no public "search by location" API without app review, so these open
+// each platform's own keyword search instead — lands on matching hashtags/locations/pins for the
+// spot name, which is the closest no-API equivalent.
+export function buildInstagramHref(name: string, area: string): string {
+  return `https://www.instagram.com/explore/search/keyword/?q=${encodeURIComponent(`${name} ${area} Bali`)}`;
+}
+
+export function buildPinterestHref(name: string, area: string): string {
+  return `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(`${name} ${area} Bali`)}`;
+}

@@ -7,7 +7,7 @@ import { rowToSpot, rowToSpotSubmission } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { useChosenStay } from "@/lib/useChosenStay";
-import { buildMapsHref, spotMapsQuery } from "@/lib/maps";
+import { buildInstagramHref, buildMapsHref, buildPinterestHref, spotMapsQuery } from "@/lib/maps";
 import { AREAS, CATEGORIES } from "@/lib/exploreConfig";
 import { logActivity } from "@/lib/activityLog";
 import { promptDayAndTime } from "@/lib/time";
@@ -274,14 +274,32 @@ export default function ExplorePage() {
             <div className="text-xs text-kb-muted">
               {[CATEGORIES.find((c) => c.slug === spot.category)?.label, spot.durationText, spot.ticketPrice].filter(Boolean).join(" · ") || "—"}
             </div>
-            <a
-              href={buildMapsHref(spotMapsQuery(spot.name, spot.area), originAddress)}
-              target="_blank"
-              rel="noreferrer"
-              className="text-[11px] font-semibold text-kb-green"
-            >
-              {originAddress ? "Rute dari penginapan ↗" : "Maps ↗"}
-            </a>
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+              <a
+                href={buildMapsHref(spotMapsQuery(spot.name, spot.area), originAddress)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] font-semibold text-kb-green"
+              >
+                {originAddress ? "Rute dari penginapan ↗" : "Maps ↗"}
+              </a>
+              <a
+                href={buildInstagramHref(spot.name, spot.area)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] font-semibold text-[#C13584]"
+              >
+                Instagram ↗
+              </a>
+              <a
+                href={buildPinterestHref(spot.name, spot.area)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] font-semibold text-[#E60023]"
+              >
+                Pinterest ↗
+              </a>
+            </div>
           </div>
           <div className="flex flex-col gap-1.5 shrink-0">
             <button
