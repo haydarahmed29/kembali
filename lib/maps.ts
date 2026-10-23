@@ -23,3 +23,7 @@ export function buildInstagramHref(name: string, area: string): string {
 export function buildPinterestHref(name: string, area: string): string {
   return `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(`${name} ${area} Bali`)}`;
 }
+
+export function buildGoogleImagesHref(name: string, area: string): string {
+  return `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(`${name} ${area} Bali`)}`;
+}

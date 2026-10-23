@@ -7,7 +7,7 @@ import { rowToSpot, rowToSpotSubmission } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { useChosenStay } from "@/lib/useChosenStay";
-import { buildInstagramHref, buildMapsHref, buildPinterestHref, spotMapsQuery } from "@/lib/maps";
+import { buildGoogleImagesHref, buildInstagramHref, buildMapsHref, buildPinterestHref, spotMapsQuery } from "@/lib/maps";
 import { AREAS, CATEGORIES } from "@/lib/exploreConfig";
 import { logActivity } from "@/lib/activityLog";
 import { promptDayAndTime } from "@/lib/time";
@@ -298,6 +298,14 @@ export default function ExplorePage() {
                 className="text-[11px] font-semibold text-[#E60023]"
               >
                 Pinterest ↗
+              </a>
+              <a
+                href={buildGoogleImagesHref(spot.name, spot.area)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] font-semibold text-[#4285F4]"
+              >
+                Lihat Gambar ↗
               </a>
             </div>
           </div>
