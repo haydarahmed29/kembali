@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+// `also` = sub-pages that light up this tab, so you can still tell where you are
 const items = [
-  { href: "/home", label: "Home", icon: HomeIcon },
-  { href: "/itinerary", label: "Itin", icon: ItinIcon },
-  { href: "/packing", label: "Packing", icon: PackingIcon },
-  { href: "/budget", label: "Budget", icon: BudgetIcon },
-  { href: "/explore", label: "Explore", icon: ExploreIcon },
+  { href: "/home", label: "Home", icon: HomeIcon, also: ["/akomodasi", "/dokumen", "/history", "/profile", "/admin"] },
+  { href: "/itinerary", label: "Itin", icon: ItinIcon, also: [] },
+  { href: "/packing", label: "Packing", icon: PackingIcon, also: [] },
+  { href: "/budget", label: "Budget", icon: BudgetIcon, also: [] },
+  { href: "/explore", label: "Explore", icon: ExploreIcon, also: ["/kiblat", "/tips"] },
 ];
 
 export function BottomNav() {
@@ -16,20 +17,21 @@ export function BottomNav() {
   return (
     <nav
       aria-label="Menu utama"
-      className="fixed left-4 right-4 bottom-4 mx-auto max-w-[440px] h-[68px] bg-white rounded-full flex items-center justify-around shadow-[0_8px_24px_rgba(30,58,42,0.12)] z-20"
+      className="fixed left-4 right-4 bottom-4 mx-auto max-w-[440px] h-[68px] bg-white rounded-[34px] flex items-center justify-around px-1.5 shadow-[0_8px_24px_rgba(30,58,42,0.12)] z-20"
     >
-      {items.map(({ href, label, icon: Icon }) => {
-        const active = pathname === href;
+      {items.map(({ href, label, icon: Icon, also }) => {
+        const active = pathname === href || also.some((p) => pathname.startsWith(p));
         return (
           <Link
             key={href}
             href={href}
-            aria-label={label}
-            className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${
+            aria-current={active ? "page" : undefined}
+            className={`flex-1 h-14 rounded-[26px] flex flex-col items-center justify-center gap-0.5 transition-colors ${
               active ? "bg-kb-lime text-kb-ink" : "text-kb-muted"
             }`}
           >
             <Icon />
+            <span className="text-[10px] font-bold leading-none">{label}</span>
           </Link>
         );
       })}
@@ -38,7 +40,7 @@ export function BottomNav() {
 }
 
 function iconProps() {
-  return { width: 22, height: 22, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  return { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
 }
 
 function HomeIcon() {

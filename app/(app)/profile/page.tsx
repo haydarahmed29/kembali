@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { confirmSheet, alertSheet } from "@/lib/promptSheet";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { isOwner, leaveGroup } from "@/lib/group";
@@ -17,12 +18,12 @@ export default function ProfilePage() {
   async function handleLeave() {
     if (!user || !group) return;
     const ownerNote = isOwner(group, user.uid) && group.memberUids.length > 1 ? " Status owner bakal pindah ke anggota lain." : "";
-    if (!window.confirm(`Keluar dari ${group.name}? Data pribadi kamu tetap tersimpan.${ownerNote}`)) return;
+    if (!(await confirmSheet(`Keluar dari ${group.name}? Data pribadi kamu tetap tersimpan.${ownerNote}`, { confirmLabel: "Keluar", danger: true }))) return;
     setLeaving(true);
     try {
       await leaveGroup(user.uid, profile?.displayName ?? "Seseorang", group);
     } catch {
-      window.alert("Gagal keluar dari group, coba lagi.");
+      await alertSheet("Gagal keluar dari group, coba lagi.");
     } finally {
       setLeaving(false);
     }

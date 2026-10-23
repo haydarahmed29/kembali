@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { rowToOutfitItem, rowToPackingBag, rowToSuppliesItem } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { defaultOutfitCategories } from "@/lib/defaults";
-import { promptField } from "@/lib/promptSheet";
+import { confirmSheet, promptField } from "@/lib/promptSheet";
 import type { OutfitItem, PackingBag, PackingItem, SuppliesItem } from "@/lib/types";
 
 type Tab = "bags" | "outfit" | "supplies";
@@ -103,7 +103,7 @@ function BagsTab() {
   }
 
   async function removeBag(bag: PackingBag) {
-    if (!window.confirm(`Hapus "${bag.name}" beserta isinya?`)) return;
+    if (!(await confirmSheet(`Hapus "${bag.name}" beserta isinya?`, { confirmLabel: "Hapus", danger: true }))) return;
     await supabase.from("packing_bags").delete().eq("id", bag.id);
   }
 

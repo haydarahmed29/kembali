@@ -10,7 +10,7 @@ import { settleUp } from "@/lib/settleUp";
 import { logActivity } from "@/lib/activityLog";
 import { isOwner } from "@/lib/group";
 import { parseRupiah } from "@/lib/time";
-import { promptFields } from "@/lib/promptSheet";
+import { confirmSheet, promptFields } from "@/lib/promptSheet";
 import type { Expense } from "@/lib/types";
 
 const CATEGORIES: Expense["category"][] = ["transport", "makan", "tiket", "penginapan", "belanja", "lainnya"];
@@ -86,7 +86,7 @@ export default function BudgetPage() {
   }
 
   async function removeExpense(exp: Expense) {
-    if (!window.confirm(`Hapus "${exp.title}" (Rp ${exp.amount.toLocaleString("id-ID")})?`)) return;
+    if (!(await confirmSheet(`Hapus "${exp.title}" (Rp ${exp.amount.toLocaleString("id-ID")})?`, { confirmLabel: "Hapus", danger: true }))) return;
     await supabase.from("expenses").delete().eq("id", exp.id);
     if (exp.groupId && group && user) {
       await logActivity({

@@ -166,8 +166,8 @@ export default function KiblatPage() {
           {heading != null
             ? aligned
               ? "✓ Udah menghadap kiblat"
-              : "Putar badan sampai jarumnya lurus ke atas"
-            : "Tanpa kompas: jarum nunjukin arah dari utara (atas = utara)"}
+              : "Putar badan sampai garis hijau ketemu panah ▲ di atas"
+            : "Tanpa kompas: garis hijau nunjukin arah kiblat dari utara (U = utara)"}
         </div>
         {heading == null && (
           <button type="button" onClick={enableCompass} className="h-10 px-4 rounded-full bg-kb-lime text-kb-ink font-bold text-xs">
@@ -209,7 +209,7 @@ export default function KiblatPage() {
       )}
 
       <Link href="/explore" className="text-xs font-bold text-kb-green px-1">
-        Cari tempat makan halal di Explore →
+        Cari tempat makan &amp; wisata di Explore →
       </Link>
 
       <p className="text-[11px] text-kb-muted px-1">

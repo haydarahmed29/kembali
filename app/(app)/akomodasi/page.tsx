@@ -8,7 +8,7 @@ import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
 import { isOwner } from "@/lib/group";
 import { logActivity } from "@/lib/activityLog";
-import { promptFields } from "@/lib/promptSheet";
+import { confirmSheet, promptFields } from "@/lib/promptSheet";
 import type { AccommodationOption } from "@/lib/types";
 
 function detectSource(url: string): AccommodationOption["source"] {
@@ -132,7 +132,7 @@ export default function AkomodasiPage() {
   async function choose(option: AccommodationOption) {
     if (!user || !group || !owner) return;
     const verb = option.chosen ? "Batal tetapkan" : "Tetapkan";
-    if (!window.confirm(`${verb} "${option.title}" sebagai tempat nginep? (boleh lebih dari satu kalau pindah-pindah hotel)`)) return;
+    if (!(await confirmSheet(`${verb} "${option.title}" sebagai tempat nginep? (boleh lebih dari satu kalau pindah-pindah hotel)`, { confirmLabel: "Ya" }))) return;
     const { error: chooseError } = await supabase.rpc("choose_accommodation", { p_option_id: option.id });
     if (chooseError) return;
     await logActivity({
@@ -145,7 +145,7 @@ export default function AkomodasiPage() {
   }
 
   async function remove(option: AccommodationOption) {
-    if (!window.confirm(`Hapus opsi "${option.title}"?`)) return;
+    if (!(await confirmSheet(`Hapus opsi "${option.title}"?`, { confirmLabel: "Hapus", danger: true }))) return;
     await supabase.from("accommodation_options").delete().eq("id", option.id);
   }
 

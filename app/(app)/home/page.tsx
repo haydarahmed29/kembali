@@ -20,6 +20,15 @@ export default function HomePage() {
   // Personal departure date wins — everyone can fly on a different day.
   const tripDate = profile?.departureDate ?? group?.startDate ?? null;
   const dLeft = daysUntil(tripDate);
+  const dToEnd = daysUntil(group?.endDate ?? null);
+  const totalDays = tripDate && group?.endDate ? (daysUntil(group.endDate) ?? 0) - (dLeft ?? 0) + 1 : null;
+  const countdown = (() => {
+    if (dLeft === null) return { label: "Berangkat", big: "—", sub: "Atur tanggal →" };
+    if (dLeft > 0) return { label: "Berangkat", big: `H-${dLeft}`, sub: formatDate(tripDate!) };
+    if (dToEnd !== null && dToEnd < 0) return { label: "Trip", big: "Selesai 🎉", sub: "Semoga seru ya!" };
+    const dayNum = 1 - dLeft;
+    return { label: "Lagi di Bali", big: `Hari ke-${dayNum}`, sub: totalDays && totalDays > 0 ? `dari ${totalDays} hari` : formatDate(tripDate!) };
+  })();
   const owner = isOwner(group, user?.uid);
 
   useEffect(() => {
@@ -109,11 +118,9 @@ export default function HomePage() {
 
       <div className="grid grid-cols-2 gap-2.5">
         <Link href="/profile" className="bg-kb-lime rounded-[22px] p-3.5 flex flex-col gap-0.5">
-          <div className="text-xs font-semibold text-[#2D3A1A]">Berangkat</div>
-          <div className="text-[28px] font-extrabold tracking-tight">
-            {dLeft === null ? "—" : dLeft > 0 ? `H-${dLeft}` : dLeft === 0 ? "Hari ini!" : "Lagi trip"}
-          </div>
-          <div className="text-xs text-[#2D3A1A]">{tripDate ? formatDate(tripDate) : "Atur tanggal →"}</div>
+          <div className="text-xs font-semibold text-[#2D3A1A]">{countdown.label}</div>
+          <div className={`${countdown.big.length > 8 ? "text-[22px]" : "text-[28px]"} font-extrabold tracking-tight`}>{countdown.big}</div>
+          <div className="text-xs text-[#2D3A1A]">{countdown.sub}</div>
         </Link>
         <Link href="/kiblat" className="bg-white rounded-[22px] p-3.5 flex flex-col gap-0.5">
           <div className="text-xs font-semibold text-kb-muted">Jadwal Sholat</div>
@@ -130,9 +137,9 @@ export default function HomePage() {
               <div className="text-xs font-bold bg-kb-lime text-kb-ink px-2.5 py-1 rounded-xl">Kode {group.code}</div>
             </div>
             <div className="grid grid-cols-3 gap-2">
-              <QuickLink href="/dokumen" title="Dokumen" />
-              <QuickLink href="/akomodasi" title="Villa" />
-              <QuickLink href="/itinerary" title="Voting" />
+              <QuickLink href="/akomodasi" emoji="🏡" title="Penginapan" sub="Vote villa" />
+              <QuickLink href="/itinerary" emoji="🗓️" title="Itinerary" sub="Vote jadwal" />
+              <QuickLink href="/dokumen" emoji="📄" title="Dokumen" sub="Tiket & booking" />
             </div>
             {owner && (
               <Link href="/admin" className="h-10 rounded-2xl bg-kb-green-light text-kb-lime font-bold text-xs flex items-center justify-center">
@@ -151,9 +158,14 @@ export default function HomePage() {
             </Link>
             .
           </p>
-          <Link href="/dokumen" className="text-xs font-bold text-kb-green">
-            Buka dokumen →
-          </Link>
+          <div className="grid grid-cols-2 gap-2 mt-1">
+            <Link href="/dokumen" className="bg-kb-bg rounded-2xl p-2.5 flex items-center gap-2 text-sm font-bold">
+              📄 Dokumen
+            </Link>
+            <Link href="/itinerary" className="bg-kb-bg rounded-2xl p-2.5 flex items-center gap-2 text-sm font-bold">
+              🗓️ Itinerary
+            </Link>
+          </div>
         </div>
       )}
 
@@ -207,10 +219,12 @@ export default function HomePage() {
   );
 }
 
-function QuickLink({ href, title }: { href: string; title: string }) {
+function QuickLink({ href, emoji, title, sub }: { href: string; emoji: string; title: string; sub: string }) {
   return (
-    <Link href={href} className="bg-kb-green-light rounded-2xl p-2.5 flex flex-col gap-0.5 text-white">
-      <span className="font-bold text-sm">{title}</span>
+    <Link href={href} className="bg-kb-green-light rounded-2xl p-2.5 flex flex-col gap-1 text-white">
+      <span className="text-lg leading-none" aria-hidden>{emoji}</span>
+      <span className="font-bold text-[13px] leading-tight">{title}</span>
+      <span className="text-[10px] text-[#C9D6C4] leading-tight">{sub}</span>
     </Link>
   );
 }

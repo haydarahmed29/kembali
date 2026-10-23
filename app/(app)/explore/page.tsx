@@ -34,6 +34,7 @@ export default function ExplorePage() {
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<Spot[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [favSpots, setFavSpots] = useState<Spot[]>([]);
 
   const [newName, setNewName] = useState("");
   const [newLink, setNewLink] = useState("");
@@ -64,16 +65,24 @@ export default function ExplorePage() {
   useEffect(() => {
     const q = search.trim();
     if (!q) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing results when the query is emptied
       setSearchResults(null);
       setSearching(false);
       return;
     }
     setSearching(true);
     const t = setTimeout(() => {
+      // match name or area, plus any category whose label fits ("cafe", "pantai", "oleh"…).
+      // Strip characters that would break PostgREST's or() syntax / act as wildcards.
+      const safe = q.replace(/[,()%_*\\]/g, " ").trim();
+      const lower = safe.toLowerCase();
+      const cats = CATEGORIES.filter((c) => c.label.toLowerCase().includes(lower) || c.slug.includes(lower)).map((c) => c.slug);
+      const ors = [`name.ilike.*${safe}*`, `area.ilike.*${safe}*`];
+      if (cats.length) ors.push(`category.in.(${cats.join(",")})`);
       supabase
         .from("spots")
         .select("*")
-        .ilike("name", `%${q}%`)
+        .or(ors.join(","))
         .order("name")
         .then(({ data }) => {
           setSearchResults(data ? data.map(rowToSpot) : []);
@@ -99,6 +108,24 @@ export default function ExplorePage() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [user]);
+
+  // "Favoritku" shows favourites from every area, not just the area tab that's selected
+  useEffect(() => {
+    if (!onlyFavorites) return;
+    const ids = [...favoriteIds];
+    if (ids.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- nothing to fetch
+      setFavSpots([]);
+      return;
+    }
+    let active = true;
+    supabase
+      .from("spots")
+      .select("*")
+      .in("id", ids)
+      .then(({ data }) => { if (active) setFavSpots(data ? data.map(rowToSpot) : []); });
+    return () => { active = false; };
+  }, [onlyFavorites, favoriteIds]);
 
   useEffect(() => {
     if (!group) {
@@ -195,16 +222,20 @@ export default function ExplorePage() {
   }
 
   const isSearching = search.trim().length > 0;
+  const mode: "search" | "favorites" | "area" = isSearching ? "search" : onlyFavorites ? "favorites" : "area";
+  const source = mode === "search" ? (searchResults ?? []) : mode === "favorites" ? favSpots : spots;
 
   // favorites first, then most-favorited, then A–Z
-  const visibleSpots = (isSearching ? (searchResults ?? []) : spots)
-    .filter((s) => !onlyFavorites || favoriteIds.has(s.id))
+  const visibleSpots = source
+    .filter((s) => mode !== "search" || !onlyFavorites || favoriteIds.has(s.id))
+    .filter((s) => mode !== "favorites" || !category || s.category === category)
     .sort(
       (a, b) =>
         Number(favoriteIds.has(b.id)) - Number(favoriteIds.has(a.id)) ||
         (b.favoriteCount ?? 0) - (a.favoriteCount ?? 0) ||
         a.name.localeCompare(b.name, "id")
     );
+  const showArea = mode !== "area";
 
   return (
     <div className="p-4 flex flex-col gap-3.5">
@@ -213,34 +244,32 @@ export default function ExplorePage() {
           ✓ {toast}
         </div>
       )}
-      <div className="flex items-center justify-between gap-2.5">
-        <h1 className="text-xl font-bold">Explore Bali</h1>
-        <div className="flex items-center gap-2 shrink-0">
-          <Link href="/tips" aria-label="Tips & Panduan" className="w-11 h-11 rounded-full bg-white flex items-center justify-center">
-            💡
-          </Link>
-          <Link href="/kiblat" aria-label="Muslim Friendly" className="w-11 h-11 rounded-full bg-kb-green text-kb-lime flex items-center justify-center">
-            🧭
-          </Link>
-        </div>
+      <h1 className="text-xl font-bold m-0">Explore Bali</h1>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Link href="/tips" className="bg-kb-green text-white rounded-[18px] px-3 py-2.5 flex items-center gap-2">
+          <span className="text-lg" aria-hidden>💡</span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-[13px] font-bold">Tips &amp; Panduan</span>
+            <span className="block text-[10px] text-[#C9D6C4] truncate">Nusa Penida, Bahasa Bali</span>
+          </span>
+        </Link>
+        <Link href="/kiblat" className="bg-white rounded-[18px] px-3 py-2.5 flex items-center gap-2">
+          <span className="text-lg" aria-hidden>🧭</span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-[13px] font-bold">Muslim Friendly</span>
+            <span className="block text-[10px] text-kb-muted truncate">Kiblat &amp; jadwal sholat</span>
+          </span>
+        </Link>
       </div>
 
-      <Link href="/tips" className="bg-kb-green rounded-[18px] px-3.5 py-3 flex items-center gap-2.5 text-white">
-        <div className="flex-1 text-[13px] font-bold">Tips &amp; Panduan · Ke Nusa Penida, Bahasa Bali, rekomendasi mood</div>
-        <span className="text-kb-lime">→</span>
-      </Link>
-
-      <Link href="/kiblat" className="bg-white rounded-[18px] px-3.5 py-3 flex items-center gap-2.5">
-        <div className="flex-1 text-[13px] font-bold">Muslim Friendly · Kompas Kiblat &amp; Jam Sholat</div>
-        <span className="text-kb-green">→</span>
-      </Link>
-
-      <div className="bg-white rounded-2xl px-3.5 h-12 flex items-center gap-2">
+      <div className="bg-white rounded-2xl px-3.5 h-12 flex items-center gap-2 focus-ring-within">
         <span className="text-kb-muted text-sm" aria-hidden>🔍</span>
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Cari nama tempat di semua area…"
+          placeholder="Cari tempat, area, atau kategori…"
+          aria-label="Cari tempat"
           className="flex-1 min-w-0 h-full bg-transparent text-sm outline-none"
         />
         {search && (
@@ -250,30 +279,32 @@ export default function ExplorePage() {
         )}
       </div>
 
-      {!isSearching && (
-        <>
-          <div className="flex gap-2 overflow-x-auto">
-            {AREAS.map((a) => (
-              <button
-                key={a}
-                type="button"
-                onClick={() => setArea(a)}
-                className={`h-10 px-4 rounded-full font-bold text-[13px] shrink-0 ${a === area ? "bg-kb-lime" : "bg-white text-[#3F4F44]"}`}
-              >
-                {a}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex gap-2 overflow-x-auto">
+      {mode === "area" && (
+        <div className="flex gap-2 overflow-x-auto">
+          {AREAS.map((a) => (
             <button
+              key={a}
               type="button"
-              onClick={() => setOnlyFavorites((v) => !v)}
-              aria-pressed={onlyFavorites}
-              className={`h-[34px] px-3.5 rounded-full text-xs font-bold shrink-0 ${onlyFavorites ? "bg-[#FDEEDC] text-[#E8720C]" : "bg-white text-[#3F4F44]"}`}
+              onClick={() => setArea(a)}
+              className={`h-10 px-4 rounded-full font-bold text-[13px] shrink-0 ${a === area ? "bg-kb-lime" : "bg-white text-[#3F4F44]"}`}
             >
-              ♥ Favoritku
+              {a}
             </button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2 overflow-x-auto">
+        <button
+          type="button"
+          onClick={() => setOnlyFavorites((v) => !v)}
+          aria-pressed={onlyFavorites}
+          className={`h-[34px] px-3.5 rounded-full text-xs font-bold shrink-0 ${onlyFavorites ? "bg-[#FDEEDC] text-[#E8720C]" : "bg-white text-[#3F4F44]"}`}
+        >
+          ♥ Favoritku
+        </button>
+        {mode !== "search" && (
+          <>
             <button
               type="button"
               onClick={() => setCategory(null)}
@@ -291,105 +322,79 @@ export default function ExplorePage() {
                 {c.emoji} {c.label}
               </button>
             ))}
-          </div>
-        </>
-      )}
+          </>
+        )}
+      </div>
 
-      {isSearching && (
-        <div className="flex gap-2 overflow-x-auto">
-          <button
-            type="button"
-            onClick={() => setOnlyFavorites((v) => !v)}
-            aria-pressed={onlyFavorites}
-            className={`h-[34px] px-3.5 rounded-full text-xs font-bold shrink-0 ${onlyFavorites ? "bg-[#FDEEDC] text-[#E8720C]" : "bg-white text-[#3F4F44]"}`}
-          >
-            ♥ Favoritku
-          </button>
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="text-[16px] font-bold truncate">
+          {mode === "search" ? `Hasil untuk "${search.trim()}"` : mode === "favorites" ? "Favoritku · semua area" : `Spot di ${area}`}
         </div>
-      )}
-
-      <div className="flex items-baseline justify-between">
-        <div className="text-[16px] font-bold">{isSearching ? `Hasil untuk "${search.trim()}"` : `Spot di ${area}`}</div>
-        <div className="text-xs text-kb-muted">{searching ? "Nyari..." : `${visibleSpots.length} tempat · favorit duluan`}</div>
+        <div className="text-xs text-kb-muted shrink-0">{searching ? "Nyari..." : `${visibleSpots.length} tempat`}</div>
       </div>
 
       {!searching && visibleSpots.length === 0 && (
         <p className="text-sm text-kb-muted">
-          {isSearching
-            ? "Gak ketemu tempat dengan nama itu."
-            : onlyFavorites
-              ? "Belum ada favorit di sini — ketuk ♥ di spot yang kamu suka."
+          {mode === "search"
+            ? "Gak ketemu. Coba kata lain, misal nama area (Ubud) atau kategori (pantai)."
+            : mode === "favorites"
+              ? "Belum ada favorit — ketuk ♥ di spot yang kamu suka."
               : "Belum ada data spot di sini — admin bisa tambah lewat dashboard."}
         </p>
       )}
 
-      {visibleSpots.map((spot) => (
-        <div key={spot.id} className="bg-white rounded-[22px] p-2.5 flex gap-3 items-center">
-          <div className="w-20 h-20 rounded-2xl bg-kb-bg shrink-0 overflow-hidden flex items-center justify-center text-2xl">
-            {spot.imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element -- arbitrary remote image URLs
-              <img src={spot.imageUrl} alt="" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
-            ) : (
-              CATEGORIES.find((c) => c.slug === spot.category)?.emoji ?? "📍"
-            )}
-          </div>
-          <div className="flex-1 min-w-0 flex flex-col gap-1">
-            <div className="text-[15px] font-bold">{spot.name}</div>
-            <div className="text-xs text-kb-muted">
-              {[isSearching ? spot.area : null, CATEGORIES.find((c) => c.slug === spot.category)?.label, spot.durationText, spot.ticketPrice]
-                .filter(Boolean)
-                .join(" · ") || "—"}
+      {visibleSpots.map((spot) => {
+        const cat = CATEGORIES.find((c) => c.slug === spot.category);
+        const fav = favoriteIds.has(spot.id);
+        return (
+          <div key={spot.id} className="bg-white rounded-[22px] p-2.5 flex flex-col gap-2.5">
+            <div className="flex gap-3 items-center">
+              <div className="w-16 h-16 rounded-2xl bg-kb-bg shrink-0 overflow-hidden flex items-center justify-center text-2xl">
+                {spot.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- arbitrary remote image URLs
+                  <img src={spot.imageUrl} alt="" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                ) : (
+                  (cat?.emoji ?? "📍")
+                )}
+              </div>
+              <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                <div className="text-[15px] font-bold leading-snug">{spot.name}</div>
+                <div className="text-xs text-kb-muted">
+                  {[showArea ? spot.area : null, cat?.label, spot.durationText, spot.ticketPrice].filter(Boolean).join(" · ") || "—"}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => toggleFavorite(spot)}
+                aria-label={fav ? "Hapus dari favorit" : "Favoritkan"}
+                aria-pressed={fav}
+                className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${fav ? "bg-[#FDEEDC] text-[#E8720C]" : "bg-white border border-kb-border text-[#9FB096]"}`}
+              >
+                ♥
+              </button>
             </div>
-            <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-              <a
-                href={buildMapsHref(spotMapsQuery(spot.name, spot.area), originAddress)}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] font-semibold text-kb-green"
-              >
-                {originAddress ? "Rute dari penginapan ↗" : "Maps ↗"}
-              </a>
-              <a
-                href={buildInstagramHref(spot.name, spot.area)}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] font-semibold text-[#C13584]"
-              >
-                Instagram ↗
-              </a>
-              <a
-                href={buildPinterestHref(spot.name, spot.area)}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] font-semibold text-[#E60023]"
-              >
-                Pinterest ↗
-              </a>
-              <a
-                href={buildGoogleImagesHref(spot.name, spot.area)}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] font-semibold text-[#4285F4]"
-              >
-                Lihat Gambar ↗
-              </a>
+            <div className="flex items-center gap-1.5">
+              <div className="flex-1 min-w-0 flex gap-1.5 overflow-x-auto">
+                <RefLink href={buildMapsHref(spotMapsQuery(spot.name, spot.area), originAddress)} className="bg-[#E6F0E4] text-kb-green">
+                  📍 {originAddress ? "Rute" : "Maps"}
+                </RefLink>
+                <RefLink href={buildInstagramHref(spot.name, spot.area)} className="bg-[#FBE8F1] text-[#C13584]">
+                  IG
+                </RefLink>
+                <RefLink href={buildPinterestHref(spot.name, spot.area)} className="bg-[#FDE7E9] text-[#E60023]">
+                  Pinterest
+                </RefLink>
+                <RefLink href={buildGoogleImagesHref(spot.name, spot.area)} className="bg-[#E8F0FE] text-[#1A73E8]">
+                  Foto
+                </RefLink>
+              </div>
+              <button type="button" onClick={() => addToItinerary(spot.name)} className="h-8 px-3 rounded-xl bg-kb-lime text-kb-ink font-bold text-[11px] shrink-0">
+                + Itin
+              </button>
             </div>
           </div>
-          <div className="flex flex-col gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => toggleFavorite(spot)}
-              aria-label="Favoritkan"
-              className={`w-10 h-10 rounded-2xl flex items-center justify-center ${favoriteIds.has(spot.id) ? "bg-[#FDEEDC] text-[#E8720C]" : "bg-white border border-kb-border text-[#9FB096]"}`}
-            >
-              ♥
-            </button>
-            <button type="button" onClick={() => addToItinerary(spot.name)} className="h-9 px-3 rounded-xl bg-kb-lime text-kb-ink font-bold text-[11px]">
-              + Itin
-            </button>
-          </div>
-        </div>
-      ))}
+        );
+      })}
 
       {group && (
         <>
@@ -449,5 +454,13 @@ export default function ExplorePage() {
         </>
       )}
     </div>
+  );
+}
+
+function RefLink({ href, className, children }: { href: string; className: string; children: React.ReactNode }) {
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className={`h-8 px-2.5 rounded-xl text-[11px] font-bold flex items-center shrink-0 ${className}`}>
+      {children}
+    </a>
   );
 }

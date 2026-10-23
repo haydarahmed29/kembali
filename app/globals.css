@@ -40,3 +40,22 @@ body {
   background: var(--color-kb-bg);
   position: relative;
 }
+
+/* App-coloured focus ring instead of the browser's default (orange on Android Chrome) */
+input:focus-visible:not(.outline-none),
+textarea:focus-visible:not(.outline-none),
+select:focus-visible:not(.outline-none) {
+  outline: 2px solid var(--color-kb-green);
+  outline-offset: 1px;
+}
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--color-kb-green);
+  outline-offset: 2px;
+}
+
+/* inputs that sit inside their own styled box (e.g. Explore search) ring the box instead */
+.focus-ring-within:focus-within {
+  outline: 2px solid var(--color-kb-green);
+  outline-offset: 1px;
+}

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { confirmSheet } from "@/lib/promptSheet";
 import { rowToAccommodationOption, rowToItineraryItem, rowToSpot } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
@@ -202,7 +203,7 @@ export default function AdminPage() {
   }
 
   async function removeSpot(spot: Spot) {
-    if (!window.confirm(`Hapus "${spot.name}" dari Explore?`)) return;
+    if (!(await confirmSheet(`Hapus "${spot.name}" dari Explore?`, { confirmLabel: "Hapus", danger: true }))) return;
     await supabase.from("spots").delete().eq("id", spot.id);
   }
 

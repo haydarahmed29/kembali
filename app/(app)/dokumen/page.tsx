@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { rowToDocument } from "@/lib/mappers";
 import { useAuth } from "@/lib/AuthProvider";
 import { useGroup } from "@/lib/useGroup";
-import { promptField } from "@/lib/promptSheet";
+import { alertSheet, confirmSheet, promptField } from "@/lib/promptSheet";
 import type { Document } from "@/lib/types";
 
 export default function DokumenPage() {
@@ -39,7 +39,7 @@ export default function DokumenPage() {
     const link = driveLink.trim();
     if (!user || !link) return;
     if (!/^https?:\/\//i.test(link)) {
-      window.alert("Link-nya harus diawali https:// ya.");
+      await alertSheet("Link-nya harus diawali https:// ya.");
       return;
     }
     const name = await promptField("Nama dokumen", "Dokumen baru", { placeholder: "misal: Tiket pesawat berangkat" });
@@ -59,11 +59,11 @@ export default function DokumenPage() {
   async function handleUpload(file: File) {
     if (!user) return;
     if (file.type !== "application/pdf") {
-      window.alert("Cuma bisa upload file PDF.");
+      await alertSheet("Cuma bisa upload file PDF.");
       return;
     }
     if (file.size > 20 * 1024 * 1024) {
-      window.alert("Maksimal 20 MB per file.");
+      await alertSheet("Maksimal 20 MB per file.");
       return;
     }
     setUploading(true);
@@ -83,7 +83,7 @@ export default function DokumenPage() {
         storage_path: path,
       });
     } catch {
-      window.alert("Upload gagal. Cek koneksi lalu coba lagi.");
+      await alertSheet("Upload gagal. Cek koneksi lalu coba lagi.");
     } finally {
       setUploading(false);
     }
@@ -96,7 +96,7 @@ export default function DokumenPage() {
   }
 
   async function handleDelete(d: Document) {
-    if (!window.confirm(`Hapus "${d.name}"?`)) return;
+    if (!(await confirmSheet(`Hapus "${d.name}"?`, { confirmLabel: "Hapus", danger: true }))) return;
     await supabase.from("documents").delete().eq("id", d.id);
     if (d.storagePath) {
       // also free up the PDF in Storage; ignore if it's already gone

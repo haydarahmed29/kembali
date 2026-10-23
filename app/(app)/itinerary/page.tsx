@@ -9,7 +9,9 @@ import { useGroup } from "@/lib/useGroup";
 import { isOwner } from "@/lib/group";
 import { logActivity } from "@/lib/activityLog";
 import { normalizeTime } from "@/lib/time";
-import { promptField, promptFields } from "@/lib/promptSheet";
+import { useChosenStay } from "@/lib/useChosenStay";
+import { buildMapsHref } from "@/lib/maps";
+import { confirmSheet, promptField, promptFields } from "@/lib/promptSheet";
 import type { ItineraryItem } from "@/lib/types";
 
 export default function ItineraryPage() {
@@ -19,6 +21,9 @@ export default function ItineraryPage() {
   const scopeId = group?.id ?? null;
   const owner = isOwner(group, user?.uid);
   const myName = profile?.displayName ?? "Seseorang";
+  const { originAddress } = useChosenStay(group?.id);
+  // "Hari 1" = the group's start date (or your own departure date on a solo trip)
+  const tripStart = group?.startDate ?? profile?.departureDate ?? null;
 
   useEffect(() => {
     if (!user) return;
@@ -112,7 +117,7 @@ export default function ItineraryPage() {
     if (!user) return;
     const winner = item.options.find((o) => o.id === optionId);
     if (!winner) return;
-    if (!window.confirm(`Tutup voting & pilih "${winner.label}"?`)) return;
+    if (!(await confirmSheet(`Tutup voting & pilih "${winner.label}"? Yang lain nggak bisa vote lagi buat slot ini.`, { title: "Tutup voting?", confirmLabel: "Tutup voting" }))) return;
     await supabase.rpc("finalize_itinerary", { p_item_id: item.id, p_option_id: optionId });
     if (group) {
       await logActivity({
@@ -125,8 +130,37 @@ export default function ItineraryPage() {
     }
   }
 
+  async function editItem(item: ItineraryItem) {
+    if (!user) return;
+    const voting = item.status === "voting";
+    const result = await promptFields(
+      [
+        // a voting slot's name comes from its winning option, so only its day/time are editable
+        ...(voting ? [] : [{ key: "title", label: "Tempat/kegiatan", defaultValue: item.title }]),
+        { key: "day", label: "Hari ke-", defaultValue: String(item.day), type: "number" as const },
+        { key: "time", label: "Jam", defaultValue: item.time, placeholder: "misal 09:30" },
+      ],
+      { title: voting ? "Pindah hari/jam" : "Edit jadwal", confirmLabel: "Simpan" }
+    );
+    if (!result) return;
+    const day = Math.max(1, Math.min(30, Math.round(Number(result.day)) || item.day));
+    const time = normalizeTime(result.time) ?? item.time;
+    const title = voting ? item.title : result.title.trim() || item.title;
+    if (day === item.day && time === item.time && title === item.title) return;
+    await supabase.from("itinerary_items").update({ day, time, title }).eq("id", item.id);
+    if (group) {
+      await logActivity({
+        groupId: group.id,
+        actorUid: user.uid,
+        actorName: myName,
+        action: "itinerary_update",
+        message: `ngubah "${title}" jadi Hari ${day} jam ${time}`,
+      });
+    }
+  }
+
   async function removeItem(item: ItineraryItem) {
-    if (!window.confirm(`Hapus "${item.title}" dari itinerary?`)) return;
+    if (!(await confirmSheet(`Hapus "${item.title}" dari itinerary?`, { confirmLabel: "Hapus", danger: true }))) return;
     await supabase.from("itinerary_items").delete().eq("id", item.id);
     if (group && user) {
       await logActivity({
@@ -171,7 +205,10 @@ export default function ItineraryPage() {
         .sort(([a], [b]) => Number(a) - Number(b))
         .map(([day, dayItems]) => (
           <div key={day} className="flex flex-col gap-2.5">
-            <div className="text-xs font-bold text-kb-muted">Hari {day}</div>
+            <div className="text-xs font-bold text-kb-muted">
+              Hari {day}
+              {dayDate(tripStart, Number(day)) && <span className="font-semibold"> · {dayDate(tripStart, Number(day))}</span>}
+            </div>
             {dayItems.map((item) => {
               const canDelete = item.createdBy === user?.uid || owner;
               return (
@@ -179,8 +216,23 @@ export default function ItineraryPage() {
                   <div className="w-11 text-[13px] font-bold pt-3.5">{item.time}</div>
                   {item.status === "final" ? (
                     <div className="flex-1 bg-white rounded-[20px] p-3.5 flex items-center gap-2.5">
-                      <div className="flex-1 min-w-0">
+                      <div className="flex-1 min-w-0 flex flex-col gap-1">
                         <div className="text-[15px] font-bold">{item.title}</div>
+                        <div className="flex gap-3">
+                          <a
+                            href={buildMapsHref(`${item.location || item.title}, Bali`, originAddress)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[11px] font-bold text-kb-green"
+                          >
+                            📍 {originAddress ? "Rute dari penginapan" : "Maps"} ↗
+                          </a>
+                          {canDelete && (
+                            <button type="button" onClick={() => editItem(item)} className="text-[11px] font-bold text-kb-muted">
+                              ✎ Edit
+                            </button>
+                          )}
+                        </div>
                       </div>
                       {group && <div className="text-[11px] font-bold bg-kb-lime px-2.5 py-1 rounded-[10px]">Final</div>}
                       {canDelete && (
@@ -196,9 +248,14 @@ export default function ItineraryPage() {
                           Voting · {new Set(item.options.flatMap((o) => o.votes)).size}/{group?.memberUids.length ?? 1} udah vote
                         </div>
                         {canDelete && (
-                          <button type="button" onClick={() => removeItem(item)} aria-label="Hapus slot" className="text-[#C9D6C4] text-sm">
-                            ✕
-                          </button>
+                          <div className="flex items-center gap-3">
+                            <button type="button" onClick={() => editItem(item)} className="text-[11px] font-bold text-[#C9D6C4]">
+                              ✎ Jam
+                            </button>
+                            <button type="button" onClick={() => removeItem(item)} aria-label="Hapus slot" className="text-[#C9D6C4] text-sm">
+                              ✕
+                            </button>
+                          </div>
                         )}
                       </div>
                       {item.options.map((opt) => {
@@ -214,7 +271,7 @@ export default function ItineraryPage() {
                               <span className="h-1.5 rounded-full bg-kb-lime block" style={{ width: `${(opt.votes.length / maxVotes) * 100}%` }} />
                             </span>
                             {voted ? <span className="text-[11px] text-[#C9D6C4]">Kamu pilih ini</span> : <span className="text-[11px] text-[#C9D6C4]">Ketuk buat vote</span>}
-                            {owner && (
+                            {owner && opt.votes.length === Math.max(...item.options.map((o) => o.votes.length)) && (
                               <button type="button" onClick={() => finalize(item, opt.id)} className="self-start text-[11px] font-bold text-kb-lime underline">
                                 Tutup voting &amp; pilih ini
                               </button>
@@ -234,4 +291,12 @@ export default function ItineraryPage() {
         ))}
     </div>
   );
+}
+
+function dayDate(start: string | null, day: number): string | null {
+  if (!start) return null;
+  const d = new Date(`${start.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setDate(d.getDate() + day - 1);
+  return d.toLocaleDateString("id-ID", { weekday: "short", day: "numeric", month: "short" });
 }
